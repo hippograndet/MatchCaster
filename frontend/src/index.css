@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #0a0a0f;
+  color: #e2e8f0;
+  font-family: 'DM Sans', sans-serif;
+  overflow: hidden;
+  height: 100vh;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #13131a;
+}
+::-webkit-scrollbar-thumb {
+  background: #2d2d3d;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3d3d50;
+}
+
+/* Agent glow animations */
+@keyframes pulse-amber {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(245, 158, 11, 0.3); }
+  50% { box-shadow: 0 0 12px 3px rgba(245, 158, 11, 0.6); }
+}
+
+@keyframes pulse-blue {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(59, 130, 246, 0.3); }
+  50% { box-shadow: 0 0 12px 3px rgba(59, 130, 246, 0.6); }
+}
+
+@keyframes pulse-emerald {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(16, 185, 129, 0.3); }
+  50% { box-shadow: 0 0 12px 3px rgba(16, 185, 129, 0.6); }
+}
+
+.agent-active-pbp { animation: pulse-amber 1.5s ease-in-out infinite; }
+.agent-active-tactical { animation: pulse-blue 1.5s ease-in-out infinite; }
+.agent-active-stats { animation: pulse-emerald 1.5s ease-in-out infinite; }
+
+/* Pitch marker flash */
+@keyframes flash-goal {
+  0% { background-color: rgba(239, 68, 68, 0.9); transform: scale(1.5); }
+  100% { background-color: rgba(239, 68, 68, 0.3); transform: scale(1); }
+}
+
+/* Slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  background: #2d2d3d;
+  height: 4px;
+  border-radius: 2px;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f59e0b;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
