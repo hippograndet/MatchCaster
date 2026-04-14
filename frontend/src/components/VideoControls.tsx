@@ -17,6 +17,7 @@ interface VideoControlsProps {
   awayColor: string
   activityBuckets: ActivityBucket[]
   goalMarkers: GoalMarker[]
+  summaryLoading: boolean
   homeTeam: string
   onPlay: () => void
   onPause: () => void
@@ -47,7 +48,7 @@ const SPEEDS = [0.5, 1, 2, 4, 8]
 export const VideoControls: React.FC<VideoControlsProps> = ({
   running, speed, matchTime, totalTime, currentPeriod, matchEnded,
   connected, muted,
-  homeColor, awayColor, activityBuckets, goalMarkers, homeTeam,
+  homeColor, awayColor, activityBuckets, goalMarkers, summaryLoading, homeTeam,
   onPlay, onPause, onSeek, onSpeedChange, onMuteToggle,
   onOpenOverlay, onChangeMatch,
 }) => {
@@ -85,8 +86,16 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
         {/* Background */}
         <div className="absolute inset-0 bg-[#111120] rounded" />
 
+        {/* Loading shimmer while summary compiles */}
+        {summaryLoading && (
+          <div className="absolute inset-0 flex items-center justify-center gap-2">
+            <div className="w-3 h-3 border border-gray-700 border-t-amber-500/60 rounded-full animate-spin" />
+            <span className="font-mono text-[10px] text-gray-700">Compiling match data…</span>
+          </div>
+        )}
+
         {/* Waveform bars (SVG) */}
-        {normalizedBuckets.length > 0 && totalTime > 0 && (
+        {!summaryLoading && normalizedBuckets.length > 0 && totalTime > 0 && (
           <svg
             className="absolute inset-0 w-full h-full"
             preserveAspectRatio="none"

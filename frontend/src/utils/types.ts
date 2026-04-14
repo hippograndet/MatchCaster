@@ -216,3 +216,49 @@ export interface GoalEvent {
   minute: number
   is_own_goal: boolean
 }
+
+// ---------------------------------------------------------------------------
+// Developer Inspector types (only used when ?dev=true)
+// ---------------------------------------------------------------------------
+
+export interface PipelineTriggerEvent {
+  type: string
+  player: string
+  team: string
+}
+
+export interface PipelineTrace {
+  trace_id: string
+  wall_time: number
+  // Trigger
+  trigger_events: PipelineTriggerEvent[]
+  classification: 'CRITICAL' | 'NOTABLE' | 'ROUTINE' | 'dead-air' | 'follow_up'
+  agent_selected: string
+  selection_reason: string
+  // 4 prompt layers
+  layer_general_context: string   // system prompt (role + personality)
+  layer_match_context: string     // score, minute, phase, possession, shots
+  layer_recent_play: string       // last 3 utterances (what not to repeat)
+  layer_immediate: string         // triggering event(s) text
+  user_prompt_assembled: string   // full user turn as sent to Ollama
+  // LLM output
+  llm_raw_response: string
+  llm_cleaned_text: string
+  llm_token_count: number
+  llm_generation_ms: number
+  llm_used_fallback: boolean
+  // TTS
+  tts_voice: string
+  tts_backend: 'piper' | 'say' | 'none' | ''
+  tts_synthesis_ms: number
+  tts_audio_duration_sec: number
+  // End-to-end
+  end_to_end_ms: number
+}
+
+export interface DebugMessage {
+  type: 'debug'
+  trace: PipelineTrace
+}
+
+export type WsMessageWithDebug = WsMessage | DebugMessage

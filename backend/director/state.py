@@ -154,6 +154,29 @@ class SharedMatchState:
     def get_all_stats(self) -> dict[str, TeamStats]:
         return dict(self._team_stats)
 
+    def reset_to_snapshot(self, snapshot: dict) -> None:
+        """
+        Restore all cumulative stats from a pre-computed snapshot dict
+        (as produced by loader.compute_snapshots).  Safe to call mid-session.
+        """
+        self.score = dict(snapshot["score"])
+        self.current_match_time = snapshot["t"]
+        self.recent_events.clear()
+        self._team_stats = {}
+        for team_name, sd in snapshot["stats"].items():
+            ts = TeamStats(name=team_name)
+            ts.shots             = sd.get("shots", 0)
+            ts.shots_on_target   = sd.get("shots_on_target", 0)
+            ts.passes_completed  = sd.get("passes_completed", 0)
+            ts.passes_attempted  = sd.get("passes_attempted", 0)
+            ts.fouls             = sd.get("fouls", 0)
+            ts.yellow_cards      = sd.get("yellow_cards", 0)
+            ts.red_cards         = sd.get("red_cards", 0)
+            ts.goals             = sd.get("goals", 0)
+            ts.xg                = sd.get("xg", 0.0)
+            ts.possession_events = sd.get("possession_events", 0)
+            self._team_stats[team_name] = ts
+
     def add_utterance(self, utterance: AgentUtterance) -> None:
         self.agent_utterances.append(utterance)
         self.last_utterance_time = utterance.match_time

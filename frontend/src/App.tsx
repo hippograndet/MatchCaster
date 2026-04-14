@@ -9,6 +9,7 @@ import { VideoControls } from './components/VideoControls'
 import { OverlayPanel } from './components/OverlayPanel'
 import { MatchSelectModal } from './components/MatchSelectModal'
 import { CommentaryOverlay } from './components/CommentaryOverlay'
+import DevPanel from './components/DevPanel'
 import { useWebSocket } from './hooks/useWebSocket'
 import type { AgentCommentary } from './hooks/useWebSocket'
 import { useAudioPlayer } from './hooks/useAudioPlayer'
@@ -16,6 +17,8 @@ import type {
   PitchMarker, PitchOverlays, Personality, HeatmapTeam, LineupPlayer, MatchInfo,
   ActivityBucket, GoalMarker,
 } from './utils/types'
+
+const IS_DEV = new URLSearchParams(window.location.search).has('dev')
 
 const MARKER_MAX_AGE_MS = 10_000
 const TRAIL_MAX_MS      = 14_000
@@ -83,12 +86,13 @@ export default function App() {
   const [heatmapAway,       setHeatmapAway]       = useState<number[][]>(emptyGrid)
   const [activityBuckets,   setActivityBuckets]   = useState<ActivityBucket[]>([])
   const [goalMarkers,       setGoalMarkers]       = useState<GoalMarker[]>([])
+  const [summaryLoading,    setSummaryLoading]    = useState(false)
 
   // ── WebSocket ─────────────────────────────────────────────────────────
   const {
     connected, matchState, matchTime, speed, running, matchEnded, currentPeriod,
     recentEvents, goalEvents, matchMeta, analysis,
-    setOnAudioReceived, sendAction,
+    setOnAudioReceived, sendAction, debugTraces,
   } = useWebSocket(selectedMatch)
 
   // ── Audio ─────────────────────────────────────────────────────────────
@@ -244,6 +248,7 @@ export default function App() {
       })
       .catch(() => {})
     // Fetch match summary for waveform
+    setSummaryLoading(true)
     fetch(`/api/match_summary/${matchId}`)
       .then(r => r.json())
       .then(data => {
@@ -251,6 +256,7 @@ export default function App() {
         setGoalMarkers(data.goals ?? [])
       })
       .catch(() => {})
+      .finally(() => setSummaryLoading(false))
   }, [])
 
   return (
@@ -380,6 +386,7 @@ export default function App() {
         awayColor={awayColor}
         activityBuckets={activityBuckets}
         goalMarkers={goalMarkers}
+        summaryLoading={summaryLoading}
         homeTeam={homeTeam}
         onPlay={handlePlay}
         onPause={handlePause}
@@ -389,6 +396,9 @@ export default function App() {
         onOpenOverlay={() => setShowOverlay(true)}
         onChangeMatch={() => setShowModal(true)}
       />
+
+      {/* Dev inspector — only rendered when ?dev=true */}
+      {IS_DEV && <DevPanel traces={debugTraces} />}
     </div>
   )
 }

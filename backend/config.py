@@ -89,3 +89,8 @@ PORT: int = 8000
 # Routine event skip rate (director)
 # ---------------------------------------------------------------------------
 ROUTINE_SKIP_RATE: float = 0.9   # Skip 90% of routine pass/carry events
+
+# ---------------------------------------------------------------------------
+# Developer mode (never True in production)
+# ---------------------------------------------------------------------------
+DEV_MODE: bool = _os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")

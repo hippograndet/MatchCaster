@@ -13,21 +13,23 @@ from config import (
     DEAD_AIR_GAME_SEC,
     ROUTINE_SKIP_RATE,
     DEFAULT_SPEED_MULTIPLIER,
+    DEV_MODE,
 )
-from director.classifier import (
+from debug.trace import PipelineTrace
+from analyser.classifier import (
     SequenceDetector,
     classify_and_tag,
     CRITICAL,
     NOTABLE,
     ROUTINE,
 )
-from director.state import SharedMatchState, AgentUtterance
-from replay.loader import MatchEvent
-from agents.play_by_play import PlayByPlayAgent
-from agents.tactical import TacticalAgent
-from agents.stats import StatsAgent
-from tts.engine import get_tts_engine
-from audio.queue import AudioQueue
+from analyser.state import SharedMatchState, AgentUtterance
+from player.loader import MatchEvent
+from commentator.agents.play_by_play import PlayByPlayAgent
+from commentator.agents.tactical import TacticalAgent
+from commentator.agents.stats import StatsAgent
+from commentator.tts.engine import get_tts_engine
+from commentator.queue import AudioQueue
 
 logger = logging.getLogger("[DIRECTOR]")
 
@@ -226,12 +228,29 @@ class Director:
         self._active_task_priority = priority
 
     async def _generate_and_queue(self, agent, events, priority, agent_name,
-                                   match_time, follow_up_agent=None, follow_up_delay=0.0):
+                                   match_time, follow_up_agent=None, follow_up_delay=0.0,
+                                   classification_hint: str = ""):
         try:
             async with self._sem:
                 if self.is_paused:
                     return
-                text = await agent.generate(events, self.state, self._analysis_context)
+
+                # --- Dev trace setup ---
+                trace = None
+                _pipeline_start = time.monotonic()
+                if DEV_MODE:
+                    classification = classification_hint or {1: "CRITICAL", 2: "NOTABLE", 3: "ROUTINE"}.get(priority, "ROUTINE")
+                    trace = PipelineTrace(
+                        trigger_events=[
+                            {"type": e.event_type, "player": e.player, "team": e.team}
+                            for e in events
+                        ],
+                        classification=classification,
+                        agent_selected=agent_name,
+                        selection_reason=f"priority={priority} → {agent_name}",
+                    )
+
+                text = await agent.generate(events, self.state, self._analysis_context, trace=trace)
                 if not text or self.is_paused:
                     return
 
@@ -248,7 +267,7 @@ class Director:
                 audio_bytes = None
                 if self._tts.available:
                     try:
-                        audio_bytes = await self._tts.synthesize(text, agent_name)
+                        audio_bytes = await self._tts.synthesize(text, agent_name, trace=trace)
                     except Exception as exc:
                         logger.warning(f"TTS failed for {agent_name}: {exc}")
 
@@ -258,6 +277,11 @@ class Director:
                     audio_bytes=audio_bytes,
                     text=text,
                 )
+
+                # Emit dev debug trace before the commentary broadcast
+                if DEV_MODE and trace and self.broadcast_cb:
+                    trace.end_to_end_ms = (time.monotonic() - _pipeline_start) * 1000
+                    await self._safe_broadcast({"type": "debug", "trace": trace.to_dict()})
 
                 if self.broadcast_cb:
                     await self._safe_broadcast({
@@ -276,7 +300,22 @@ class Director:
                     if self.is_paused:
                         return
                     try:
-                        follow_text = await follow_up_agent.generate(events, self.state, self._analysis_context)
+                        follow_trace = None
+                        _follow_start = time.monotonic()
+                        if DEV_MODE:
+                            follow_trace = PipelineTrace(
+                                trigger_events=[
+                                    {"type": e.event_type, "player": e.player, "team": e.team}
+                                    for e in events
+                                ],
+                                classification="follow_up",
+                                agent_selected=follow_up_agent.name,
+                                selection_reason="follow_up after primary",
+                            )
+
+                        follow_text = await follow_up_agent.generate(
+                            events, self.state, self._analysis_context, trace=follow_trace
+                        )
                         if follow_text and not self.is_paused:
                             follow_utt = AgentUtterance(
                                 agent_name=follow_up_agent.name,
@@ -287,7 +326,9 @@ class Director:
                             follow_audio = None
                             if self._tts.available:
                                 try:
-                                    follow_audio = await self._tts.synthesize(follow_text, follow_up_agent.name)
+                                    follow_audio = await self._tts.synthesize(
+                                        follow_text, follow_up_agent.name, trace=follow_trace
+                                    )
                                 except Exception:
                                     pass
                             await self.audio_queue.put_audio(
@@ -296,6 +337,11 @@ class Director:
                                 audio_bytes=follow_audio,
                                 text=follow_text,
                             )
+
+                            if DEV_MODE and follow_trace and self.broadcast_cb:
+                                follow_trace.end_to_end_ms = (time.monotonic() - _follow_start) * 1000
+                                await self._safe_broadcast({"type": "debug", "trace": follow_trace.to_dict()})
+
                             if self.broadcast_cb:
                                 await self._safe_broadcast({
                                     "type": "commentary",
@@ -371,6 +417,7 @@ class Director:
                             priority=3,
                             agent_name="play_by_play",
                             match_time=match_time,
+                            classification_hint="dead-air",
                         )
                     finally:
                         self._dead_air_generating = False
@@ -392,6 +439,7 @@ class Director:
                         priority=3,
                         agent_name=agent_name,
                         match_time=match_time,
+                        classification_hint="dead-air",
                     )
                 finally:
                     self._dead_air_generating = False

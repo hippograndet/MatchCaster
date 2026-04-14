@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react'
 import type {
-  WsMessage,
   MatchState,
   MatchEventData,
   AgentName,
@@ -11,7 +10,10 @@ import type {
   MatchMeta,
   MatchAnalysis,
   Personality,
+  PipelineTrace,
 } from '../utils/types'
+
+const IS_DEV = new URLSearchParams(window.location.search).has('dev')
 
 const WS_BASE = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000'
 const RECONNECT_DELAY_MS = 2000
@@ -39,6 +41,7 @@ export interface UseWebSocketReturn {
   nicknameMap: Record<string, string>
   setOnAudioReceived: (cb: ((msg: AudioMessage) => void) | null) => void
   sendAction: (action: string, extra?: Record<string, unknown>) => void
+  debugTraces: PipelineTrace[]
 }
 
 export function useWebSocket(matchId: string | null): UseWebSocketReturn {
@@ -46,6 +49,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
   const audioCallbackRef = useRef<((msg: AudioMessage) => void) | null>(null)
+  const isFirstConnectRef = useRef(true)   // true = seek to 0 on next open
 
   const [connected, setConnected] = useState(false)
   const [matchState, setMatchState] = useState<MatchState | null>(null)
@@ -62,6 +66,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
   const [agentCommentaries, setAgentCommentaries] = useState<
     Record<AgentName, AgentCommentary | null>
   >({ play_by_play: null, tactical: null, stats: null })
+  const [debugTraces, setDebugTraces] = useState<PipelineTrace[]>([])
 
   const setOnAudioReceived = useCallback(
     (cb: ((msg: AudioMessage) => void) | null) => {
@@ -71,8 +76,16 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
   )
 
   const handleMessage = useCallback((raw: string) => {
-    let msg: WsMessage
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let msg: any
     try { msg = JSON.parse(raw) } catch { return }
+
+    // Developer debug trace — handled before the main switch
+    if (IS_DEV && msg.type === 'debug') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setDebugTraces(prev => [(msg as any).trace as PipelineTrace, ...prev].slice(0, 100))
+      return
+    }
 
     switch (msg.type) {
       case 'state':
@@ -155,6 +168,11 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     ws.onopen = () => {
       if (!mountedRef.current) { ws.close(); return }
       setConnected(true)
+      // On fresh match selection, always start from the beginning
+      if (isFirstConnectRef.current) {
+        isFirstConnectRef.current = false
+        ws.send(JSON.stringify({ action: 'seek', match_id: matchId, target_time: 0 }))
+      }
       ws.send(JSON.stringify({ action: 'play', match_id: matchId }))
     }
     ws.onmessage = (evt) => handleMessage(evt.data)
@@ -173,6 +191,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     setGoalEvents([])
     setMatchEnded(false)
     setCurrentPeriod(1)
+    isFirstConnectRef.current = true    // next open → seek to 0
     setAnalysis(null)
     setAgentCommentaries({ play_by_play: null, tactical: null, stats: null })
     if (matchId) connect()
@@ -208,5 +227,6 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     nicknameMap,
     setOnAudioReceived,
     sendAction,
+    debugTraces,
   }
 }

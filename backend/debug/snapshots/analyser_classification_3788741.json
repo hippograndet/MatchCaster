@@ -1,0 +1,179 @@
+{
+  "match_id": "3788741",
+  "total": 3803,
+  "distribution": {
+    "routine": 3537,
+    "notable": 238,
+    "critical": 28
+  },
+  "critical_events": [
+    {
+      "type": "Shot",
+      "player": "Ciro Immobile",
+      "team": "Italy",
+      "time": 129.2
+    },
+    {
+      "type": "Shot",
+      "player": "Domenico Berardi",
+      "team": "Italy",
+      "time": 805.8
+    },
+    {
+      "type": "Shot",
+      "player": "Lorenzo Insigne",
+      "team": "Italy",
+      "time": 1023.3
+    },
+    {
+      "type": "Shot",
+      "player": "Leonardo Bonucci",
+      "team": "Italy",
+      "time": 1150.2
+    },
+    {
+      "type": "Shot",
+      "player": "Ciro Immobile",
+      "team": "Italy",
+      "time": 1214.9
+    },
+    {
+      "type": "Shot",
+      "player": "Giorgio Chiellini",
+      "team": "Italy",
+      "time": 1300.2
+    },
+    {
+      "type": "Shot",
+      "player": "Leonardo Bonucci",
+      "team": "Italy",
+      "time": 1324.9
+    },
+    {
+      "type": "Shot",
+      "player": "Nicol\u00f2 Barella",
+      "team": "Italy",
+      "time": 1729.9
+    },
+    {
+      "type": "Shot",
+      "player": "Ciro Immobile",
+      "team": "Italy",
+      "time": 1925.6
+    },
+    {
+      "type": "Shot",
+      "player": "Lorenzo Insigne",
+      "team": "Italy",
+      "time": 2164.1
+    },
+    {
+      "type": "Shot",
+      "player": "Domenico Berardi",
+      "team": "Italy",
+      "time": 2315.2
+    },
+    {
+      "type": "Shot",
+      "player": "Ciro Immobile",
+      "team": "Italy",
+      "time": 2562.5
+    },
+    {
+      "type": "Shot",
+      "player": "Lorenzo Insigne",
+      "team": "Italy",
+      "time": 2652.2
+    },
+    {
+      "type": "Shot",
+      "player": "Domenico Berardi",
+      "team": "Italy",
+      "time": 2673.6
+    },
+    {
+      "type": "Shot",
+      "player": "Cengiz \u00dcnder",
+      "team": "Turkey",
+      "time": 3058.0
+    },
+    {
+      "type": "Shot",
+      "player": "Leonardo Spinazzola",
+      "team": "Italy",
+      "time": 3235.3
+    },
+    {
+      "type": "Shot",
+      "player": "Ciro Immobile",
+      "team": "Italy",
+      "time": 3238.3
+    },
+    {
+      "type": "Shot",
+      "player": "Lorenzo Insigne",
+      "team": "Italy",
+      "time": 3381.5
+    },
+    {
+      "type": "Shot",
+      "player": "Giorgio Chiellini",
+      "team": "Italy",
+      "time": 3434.5
+    },
+    {
+      "type": "Shot",
+      "player": "Manuel Locatelli",
+      "team": "Italy",
+      "time": 3444.1
+    },
+    {
+      "type": "Shot",
+      "player": "Nicol\u00f2 Barella",
+      "team": "Italy",
+      "time": 3492.5
+    },
+    {
+      "type": "Shot",
+      "player": "Domenico Berardi",
+      "team": "Italy",
+      "time": 3531.3
+    },
+    {
+      "type": "Shot",
+      "player": "Leonardo Spinazzola",
+      "team": "Italy",
+      "time": 3931.4
+    },
+    {
+      "type": "Shot",
+      "player": "Ciro Immobile",
+      "team": "Italy",
+      "time": 3933.2
+    },
+    {
+      "type": "Pass",
+      "player": "Ciro Immobile",
+      "team": "Italy",
+      "time": 4709.1
+    },
+    {
+      "type": "Shot",
+      "player": "Lorenzo Insigne",
+      "team": "Italy",
+      "time": 4710.4
+    },
+    {
+      "type": "Shot",
+      "player": "Burak Y\u0131lmaz",
+      "team": "Turkey",
+      "time": 5515.8
+    },
+    {
+      "type": "Shot",
+      "player": "Merih Demiral",
+      "team": "Turkey",
+      "time": 5538.3
+    }
+  ]
+}

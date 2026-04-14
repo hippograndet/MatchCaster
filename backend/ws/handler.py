@@ -10,15 +10,15 @@ from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from audio.queue import AudioQueue
+from commentator.queue import AudioQueue
 from director.router import Director
-from director.state import SharedMatchState
-from replay.emitter import get_or_create_session, ReplaySession
-from replay.loader import load_events, list_available_matches
-from analysis.engine import MatchAnalysisEngine
-from enrichment.match_meta import get_match_meta
-from enrichment.weather import fetch_weather
-from enrichment.team_colors import get_team_colors
+from analyser.state import SharedMatchState
+from player.emitter import get_or_create_session, ReplaySession
+from player.loader import load_events, list_available_matches, compute_snapshots
+from analyser.engine import MatchAnalysisEngine
+from analyser.enrichment.match_meta import get_match_meta
+from analyser.enrichment.weather import fetch_weather
+from analyser.enrichment.team_colors import get_team_colors
 
 logger = logging.getLogger("[WS]")
 
@@ -55,6 +55,7 @@ class MatchSession:
 
         self._init_teams()
         self._load_nicknames()
+        self._snapshots: list[dict] = []   # populated lazily on first seek
 
     # ------------------------------------------------------------------
     # Init
@@ -191,6 +192,54 @@ class MatchSession:
 
         logger.info(f"Enrichment loaded: {full_meta.competition} | {full_meta.stadium} | weather={weather.description if weather and weather.available else 'N/A'}")
 
+    def _ensure_snapshots(self) -> None:
+        """Compute (once) the 5-min stat snapshots for this match."""
+        if self._snapshots:
+            return
+        try:
+            events = self.replay_session.events
+            self._snapshots = compute_snapshots(
+                events, self.state.home_team, self.state.away_team
+            )
+            logger.info(f"Precomputed {len(self._snapshots)} stat snapshots for {self.match_id}")
+        except Exception as exc:
+            logger.warning(f"Could not compute snapshots: {exc}")
+            self._snapshots = []
+
+    def _restore_stats_at(self, target_time: float) -> None:
+        """
+        Restore SharedMatchState to the snapshot just before target_time,
+        then fast-replay individual events from snapshot.t → target_time
+        to get exact stats at the seek point.
+        """
+        self._ensure_snapshots()
+        if not self._snapshots:
+            return
+
+        # Find the latest snapshot at or before target_time
+        snap = self._snapshots[0]
+        for s in self._snapshots:
+            if s["t"] <= target_time:
+                snap = s
+            else:
+                break
+
+        # Restore to snapshot
+        self.state.reset_to_snapshot(snap)
+
+        # Fast-replay individual events from snap.t to target_time
+        events_in_range = [
+            e for e in self.replay_session.events
+            if snap["t"] < e.timestamp_sec <= target_time
+        ]
+        if events_in_range:
+            self.state.update(events_in_range, target_time)
+
+        logger.debug(
+            f"Stats restored to {target_time:.0f}s from snapshot@{snap['t']:.0f}s "
+            f"(+{len(events_in_range)} events) score={self.state.score}"
+        )
+
     def stop(self) -> None:
         self.director.stop()
         for t in (self._audio_pump_task, self._clock_broadcast_task, self._event_consumer_task):
@@ -271,13 +320,27 @@ class MatchSession:
                 self.director.set_paused(False)
 
         elif action == "seek":
-            # Seek to absolute match time
+            # Seek to absolute match time and restore stats/score to that point
             target = max(0.0, float(msg.get("target_time", 0)))
             was_paused = self.replay_session.clock._paused
             self.replay_session.clock.pause()
             self.replay_session.seek(target)
             self.director.set_paused(True)
             self.director._last_utterance_game_time = target - 999
+            # Restore cumulative stats to the target time
+            self._restore_stats_at(target)
+            # Broadcast updated state immediately so the frontend sees the
+            # correct score/stats before the next clock tick
+            await self._broadcast({
+                "type": "state",
+                "state": self.state.to_dict(),
+                "clock": {
+                    "match_time": target,
+                    "speed": self.replay_session.clock.speed,
+                    "running": False,
+                },
+                "match_id": self.match_id,
+            })
             if not was_paused:
                 self.replay_session.clock.resume()
                 self.director.set_paused(False)

@@ -1,0 +1,39 @@
+{
+  "score": {
+    "home": 0,
+    "away": 0
+  },
+  "home_team": "Italy",
+  "away_team": "Turkey",
+  "match_time": 655.744,
+  "minute": "10'",
+  "phase": "open_play",
+  "possession": {
+    "Italy": 68.4,
+    "Turkey": 31.6
+  },
+  "stats": {
+    "Italy": {
+      "shots": 1,
+      "shots_on_target": 0,
+      "passes_completed": 92,
+      "passes_attempted": 105,
+      "fouls": 0,
+      "yellow_cards": 0,
+      "red_cards": 0,
+      "goals": 0,
+      "xg": 0.05
+    },
+    "Turkey": {
+      "shots": 0,
+      "shots_on_target": 0,
+      "passes_completed": 28,
+      "passes_attempted": 42,
+      "fouls": 1,
+      "yellow_cards": 0,
+      "red_cards": 0,
+      "goals": 0,
+      "xg": 0.0
+    }
+  }
+}
