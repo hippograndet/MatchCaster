@@ -117,9 +117,20 @@ print(f"  Momentum   : {home_team} {snap.momentum_home:.0f}  /  {away_team} {sna
 print(f"  xG         : {home_team} {snap.xg_home:.2f}  /  {away_team} {snap.xg_away:.2f}")
 print(f"  Shots      : {len(snap.shots)}")
 print(f"  Box entries: {snap.dangerous_entries}")
-print(f"  Short-term : {snap.short_term_text[:80]}...")
-if snap.long_term_text:
-    print(f"  Long-term  : {snap.long_term_text[:80]}...")
+
+# ── New per-granularity context fields ─────────────────────────────────────
+print(f"\n[engine] AnalysisPacket — per-granularity text context:")
+print(f"  instant_text      : {snap.instant_text or '(empty)'}")
+print(f"  short_term_text   : {snap.short_term_text[:100] if snap.short_term_text else '(empty)'}")
+print(f"  long_term_text    : {snap.long_term_text[:100] if snap.long_term_text else '(empty)'}")
+print(f"  match_totals_text :")
+for line in (snap.match_totals_text or "(empty)").split("\n"):
+    print(f"    {line}")
+
+# Verify all four fields are non-empty at this point in the match
+assert snap.short_term_text, "short_term_text should be non-empty after 1000 events"
+assert snap.match_totals_text, "match_totals_text should be non-empty after 1000 events"
+print("\n[engine] All four context fields present — OK")
 
 # ── 4. Spatial Converter ───────────────────────────────────────────────────
 

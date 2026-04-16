@@ -387,9 +387,10 @@ function ConfigTab() {
 // ---------------------------------------------------------------------------
 interface DevPanelProps {
   traces: PipelineTrace[]
+  onForceTrigger?: () => void
 }
 
-export default function DevPanel({ traces }: DevPanelProps) {
+export default function DevPanel({ traces, onForceTrigger }: DevPanelProps) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'traces' | 'config'>('traces')
   const [pendingOverrides, setPendingOverrides] = useState<Record<string, boolean>>({})
@@ -470,13 +471,21 @@ export default function DevPanel({ traces }: DevPanelProps) {
               {/* Traces toolbar */}
               <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800 flex-shrink-0">
                 <span className="text-[10px] text-zinc-500">{traces.length} traces (newest first)</span>
-                <button
-                  onClick={() => {/* traces managed by parent */}}
-                  className="ml-auto text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                {onForceTrigger && (
+                  <button
+                    onClick={onForceTrigger}
+                    className="ml-2 text-[10px] px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white transition-colors font-mono"
+                    title="Force an immediate commentary call (bypasses cooldowns)"
+                  >
+                    ⚡ Force trigger
+                  </button>
+                )}
+                <span
+                  className="ml-auto text-[10px] text-zinc-600"
                   title="Traces are cleared when you reload the match"
                 >
                   ← reload match to clear
-                </button>
+                </span>
               </div>
 
               {/* Scrollable trace list */}

@@ -13,8 +13,8 @@ MAX_CONCURRENT_AGENT_CALLS: int = 2          # Don't overload GPU
 # ---------------------------------------------------------------------------
 OLLAMA_BASE_URL: str = "http://localhost:11434"
 OLLAMA_MODEL: str = "mistral:7b-instruct-q4_K_M"
-OLLAMA_TIMEOUT_SEC: float = 8.0             # Kill slow generations
-MAX_OUTPUT_TOKENS: int = 80                 # Keep commentary lines SHORT
+OLLAMA_TIMEOUT_SEC: float = 45.0            # Covers cold model load (~6s) + generation
+MAX_OUTPUT_TOKENS: int = 50                 # Keep commentary lines SHORT (~35 words max)
 
 AGENT_TEMPERATURES: dict = {
     "play_by_play": 0.8,  # Creative, energetic
@@ -26,9 +26,11 @@ AGENT_TEMPERATURES: dict = {
 # TTS
 # ---------------------------------------------------------------------------
 PIPER_VOICES: dict = {
-    "play_by_play": "en_US-lessac-medium",   # Energetic male voice
-    "tactical":     "en_GB-alan-medium",      # Measured British analyst
-    "stats":        "en_US-amy-medium",       # Clear, concise female voice
+    "play_by_play": "en_US-lessac-medium",   # Energetic American male — PBP
+    "analyst":      "en_GB-alan-medium",      # Measured British analyst
+    # Legacy aliases
+    "tactical":     "en_GB-alan-medium",
+    "stats":        "en_US-amy-medium",
 }
 MAX_AUDIO_DURATION_SEC: float = 6.0          # Truncate TTS output longer than this
 
@@ -55,13 +57,23 @@ PRIORITY_WEIGHTS: dict = {
 # ---------------------------------------------------------------------------
 # Agent turn policy
 # ---------------------------------------------------------------------------
-PBP_PRIORITY: int = 1     # Highest — speaks during action
-TACTICAL_PRIORITY: int = 2
-STATS_PRIORITY: int = 3
-MIN_GAP_GAME_SEC: float = 6.0                  # Minimum game-seconds between utterances (speed-adjusted)
-DEAD_AIR_GAME_SEC: float = 12.0               # Dead-air filler triggers after this many game-seconds of silence
-MIN_GAP_BETWEEN_UTTERANCES_SEC: float = 1.5   # Legacy alias — kept for reference
-DEAD_AIR_THRESHOLD_SEC: float = 5.0            # Legacy alias
+PBP_PRIORITY: int = 1       # Highest — speaks during action
+ANALYST_PRIORITY: int = 2   # Expert analyst (merged tactical + stats)
+
+# Look-ahead batch window (game-seconds)
+# Formula: clamp(22s * speed, min=30, max=90)
+PBP_BATCH_WINDOW_MIN_SEC: float = 30.0   # minimum look-ahead (game-sec)
+PBP_BATCH_WINDOW_MAX_SEC: float = 90.0   # maximum look-ahead (game-sec)
+PBP_BATCH_REAL_BUDGET_SEC: float = 22.0  # target real-time budget for generation
+
+# Analyst scheduling
+ANALYST_MIN_GAP_GAME_SEC: float = 300.0   # 5 game-minutes minimum between timer firings
+ANALYST_MAX_GAP_GAME_SEC: float = 420.0   # 7 game-minutes maximum
+ANALYST_BLOCK_FIRST_SEC: float = 300.0    # blocked for first 5 game-minutes of play
+GOAL_ANALYST_COOLDOWN_SEC: float = 120.0  # analyst blocked 2 game-min after goal
+
+# Max notable events sent to LLM per batch (to keep prompt concise)
+MAX_EVENTS_PER_BATCH: int = 8
 
 # ---------------------------------------------------------------------------
 # Audio queue

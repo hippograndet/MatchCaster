@@ -1,7 +1,7 @@
 # backend/analyser/engine.py
 # Non-AI real-time pattern analysis engine.
 # Tracks short-term momentum/sequences and long-term trends,
-# then formats them as context strings for the AI commentary agents.
+# then formats them as structured context for AI commentary agents.
 
 from __future__ import annotations
 
@@ -42,13 +42,20 @@ class ZoneVector:
 
 @dataclass
 class AnalysisSnapshot:
-    """Returned by get_context_snapshot() — carries both text context for AI
-    and structured data for the frontend."""
-    # For AI agents
-    short_term_text: str = ""
-    long_term_text: str = ""
+    """Returned by get_context_snapshot() — carries structured context for AI
+    agents (at three temporal granularities) and display data for the frontend."""
 
-    # For frontend
+    # ── AI context — granularity-specific ────────────────────────────────
+    # Play-by-play: what's happening right now (last 60s)
+    instant_text: str = ""
+    # Play-by-play + Tactical: last 3 game-minutes
+    short_term_text: str = ""
+    # Tactical + Stats: full match picture
+    long_term_text: str = ""
+    # Stats agent: clean number table (shots, xG, entries)
+    match_totals_text: str = ""
+
+    # ── Frontend display data ─────────────────────────────────────────────
     momentum_home: float = 50.0    # 0–100
     momentum_away: float = 50.0
     shots: list[ShotRecord] = field(default_factory=list)
@@ -149,6 +156,22 @@ class MatchAnalysisEngine:
     # Public API
     # ------------------------------------------------------------------
 
+    def reset(self) -> None:
+        """Clear all accumulated state. Call before re-feeding events on seek."""
+        self._window.clear()
+        self.shots.clear()
+        self._xg = {self.home_team: 0.0, self.away_team: 0.0}
+        self._entries = {self.home_team: 0, self.away_team: 0}
+        self._vectors = {self.home_team: {}, self.away_team: {}}
+        self._chain_team = None
+        self._chain_len = 0
+        self._chain_max_recent = 0
+        self._recent_chains.clear()
+        self._press_window.clear()
+        self._phase_blocks.clear()
+        self._last_phase_check = 0.0
+        self._current_time = 0.0
+
     def update(self, events: list[MatchEvent], match_time: float) -> None:
         """Process a batch of events and update all tracking structures."""
         self._current_time = match_time
@@ -160,14 +183,18 @@ class MatchAnalysisEngine:
         self._update_phase(match_time)
 
     def get_context_snapshot(self) -> AnalysisSnapshot:
-        """Return a snapshot with text context for AI and data for frontend."""
-        short = self._build_short_term_text()
-        long_ = self._build_long_term_text()
-        mom = self._compute_momentum()
+        """Return a snapshot with per-granularity text context for AI and data for frontend."""
+        instant  = self._build_instant_text()
+        short    = self._build_short_term_text()
+        long_    = self._build_long_term_text()
+        totals   = self._build_match_totals_text()
+        mom      = self._compute_momentum()
 
         return AnalysisSnapshot(
+            instant_text=instant,
             short_term_text=short,
             long_term_text=long_,
+            match_totals_text=totals,
             momentum_home=mom[self.home_team],
             momentum_away=mom[self.away_team],
             shots=list(self.shots),
@@ -337,79 +364,148 @@ class MatchAnalysisEngine:
         return result
 
     # ------------------------------------------------------------------
-    # Text context builders
+    # Text context builders — one per temporal granularity
     # ------------------------------------------------------------------
 
+    def _build_instant_text(self) -> str:
+        """Last 60 seconds — for play-by-play context."""
+        now = self._current_time
+        recent = [(t, team, w, label) for t, team, w, label in self._window if now - t <= 60]
+        if not recent:
+            return ""
+
+        scores: dict[str, float] = {}
+        for _, team, w, _ in recent:
+            scores[team] = scores.get(team, 0.0) + w
+
+        if not scores:
+            return ""
+
+        dominant = max(scores, key=lambda t: scores[t])
+        parts = [f"{dominant} in control"]
+
+        labels = [label for _, _, _, label in recent]
+        shot_count = labels.count("Shot")
+        if shot_count:
+            parts.append(f"{shot_count} shot{'s' if shot_count > 1 else ''}")
+        entry_count = labels.count("Entry")
+        if entry_count:
+            parts.append(f"{entry_count} box {'entries' if entry_count > 1 else 'entry'}")
+        press_count = sum(1 for _, t, _, l in recent if l == "Pressure" and t == dominant)
+        if press_count >= 3:
+            parts.append(f"pressing ({press_count} events)")
+
+        # Active pass chain
+        if self._chain_team and self._chain_len >= 5:
+            parts.append(f"{self._chain_len}-pass chain building")
+
+        return " | ".join(parts)
+
     def _build_short_term_text(self) -> str:
+        """Last 3 game-minutes — for play-by-play and tactical context."""
         if not self._window:
             return ""
 
         mom = self._compute_momentum()
         hm = mom[self.home_team]
         am = mom[self.away_team]
+        dominant = self.home_team if hm >= am else self.away_team
+        dom_pct = max(hm, am)
 
-        lines = []
-        lines.append(
-            f"MOMENTUM (last 3 min): {self.home_team} {hm:.0f} | {self.away_team} {am:.0f}"
-        )
+        parts = []
+
+        # Momentum narrative
+        if dom_pct >= 65:
+            parts.append(f"{dominant} dominant this spell ({dom_pct:.0f}% momentum)")
+        elif dom_pct >= 55:
+            parts.append(f"{dominant} edging this period ({dom_pct:.0f}% momentum)")
+        else:
+            parts.append(f"evenly contested ({self.home_team} {hm:.0f} vs {self.away_team} {am:.0f})")
 
         # Pressing intensity
         home_press = sum(1 for _, t in self._press_window if t == self.home_team)
         away_press = sum(1 for _, t in self._press_window if t == self.away_team)
-        if home_press + away_press > 0:
-            if home_press > away_press * 1.5:
-                lines.append(f"{self.home_team} pressing intensely ({home_press} pressure events)")
-            elif away_press > home_press * 1.5:
-                lines.append(f"{self.away_team} pressing intensely ({away_press} pressure events)")
+        if home_press > away_press * 1.5 and home_press >= 3:
+            parts.append(f"{self.home_team} pressing intensely ({home_press} pressure events)")
+        elif away_press > home_press * 1.5 and away_press >= 3:
+            parts.append(f"{self.away_team} pressing intensely ({away_press} pressure events)")
 
         # Recent longest pass chain
         if self._recent_chains:
             team, length = max(self._recent_chains, key=lambda x: x[1])
             if length >= 5:
-                lines.append(f"Notable sequence: {length}-pass chain by {team}")
+                parts.append(f"{team} completed a {length}-pass sequence")
 
-        # Dangerous entries in window
+        # Box entries this spell
         entry_counts: dict[str, int] = {}
         for _, team, _, label in self._window:
             if label == "Entry":
                 entry_counts[team] = entry_counts.get(team, 0) + 1
         for team, cnt in entry_counts.items():
             if cnt >= 2:
-                lines.append(f"{team} threatening — {cnt} box entries this spell")
+                parts.append(f"{team} threatening — {cnt} box entries this spell")
 
-        return " | ".join(lines)
+        return ". ".join(parts) + "."
 
     def _build_long_term_text(self) -> str:
-        lines = []
+        """Full match trends — for tactical analysis."""
+        parts = []
 
-        # xG balance
         hxg = self._xg.get(self.home_team, 0.0)
         axg = self._xg.get(self.away_team, 0.0)
         if hxg + axg > 0.1:
-            lines.append(
-                f"xG: {self.home_team} {hxg:.2f} vs {self.away_team} {axg:.2f}"
-            )
-            # Narrative note if xG diverges from score
-            if hxg > axg + 0.5:
-                lines.append(f"{self.home_team} creating more clear chances despite the scoreline")
-            elif axg > hxg + 0.5:
-                lines.append(f"{self.away_team} edging the xG battle")
+            parts.append(f"xG: {self.home_team} {hxg:.2f} vs {self.away_team} {axg:.2f}")
+            if hxg > axg + 0.8:
+                parts.append(f"{self.home_team} creating significantly more clear chances")
+            elif axg > hxg + 0.8:
+                parts.append(f"{self.away_team} edging the xG battle")
 
-        # Total shots
         home_shots = sum(1 for s in self.shots if s.team == self.home_team)
         away_shots = sum(1 for s in self.shots if s.team == self.away_team)
         if home_shots + away_shots > 0:
-            lines.append(f"Shots: {self.home_team} {home_shots} vs {self.away_team} {away_shots}")
+            parts.append(f"shots: {self.home_team} {home_shots} vs {self.away_team} {away_shots}")
 
-        # Dangerous entries total
         he = self._entries.get(self.home_team, 0)
         ae = self._entries.get(self.away_team, 0)
         if he + ae > 0:
-            lines.append(f"Box entries: {self.home_team} {he} vs {self.away_team} {ae}")
+            parts.append(f"box entries: {self.home_team} {he} vs {self.away_team} {ae}")
 
-        # Dominant phases
         if len(self._phase_blocks) >= 2:
-            last_dominant = self._phase_blocks[-1][1]
-            lines.append(f"Recent phase: {last_dominant} have controlled the last spell")
+            block_counts: dict[str, int] = {}
+            for _, t in self._phase_blocks:
+                block_counts[t] = block_counts.get(t, 0) + 1
+            dom = max(block_counts, key=lambda t: block_counts[t])
+            blocks = block_counts[dom]
+            total = len(self._phase_blocks)
+            parts.append(f"{dom} controlled {blocks} of {total} five-minute phases")
 
-        return " | ".join(lines)
+        return ". ".join(parts) + "." if parts else ""
+
+    def _build_match_totals_text(self) -> str:
+        """Clean number table — for the stats agent to pull specific facts from."""
+        home_shots = sum(1 for s in self.shots if s.team == self.home_team)
+        away_shots = sum(1 for s in self.shots if s.team == self.away_team)
+        home_sot   = sum(1 for s in self.shots if s.team == self.home_team
+                         and s.outcome in ("Goal", "Saved", "Saved to Post"))
+        away_sot   = sum(1 for s in self.shots if s.team == self.away_team
+                         and s.outcome in ("Goal", "Saved", "Saved to Post"))
+        hxg = self._xg.get(self.home_team, 0.0)
+        axg = self._xg.get(self.away_team, 0.0)
+        he  = self._entries.get(self.home_team, 0)
+        ae  = self._entries.get(self.away_team, 0)
+
+        lines = [
+            f"Shots: {self.home_team} {home_shots} ({home_sot} on target)"
+            f" — {self.away_team} {away_shots} ({away_sot} on target)",
+            f"xG:    {self.home_team} {hxg:.2f} — {self.away_team} {axg:.2f}",
+            f"Box entries: {self.home_team} {he} — {self.away_team} {ae}",
+        ]
+
+        if self._phase_blocks:
+            block_counts: dict[str, int] = {}
+            for _, t in self._phase_blocks:
+                block_counts[t] = block_counts.get(t, 0) + 1
+            dom = max(block_counts, key=lambda t: block_counts[t])
+            lines.append(f"Match control: {dom} leading ({block_counts[dom]} of {len(self._phase_blocks)} phases)")
+
+        return "\n".join(lines)

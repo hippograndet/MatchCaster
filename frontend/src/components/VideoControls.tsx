@@ -2,7 +2,7 @@
 // Video-player-style match controls: activity waveform seek bar, ±10/30s, speed, mute
 
 import React, { useRef, useCallback, useMemo } from 'react'
-import type { ActivityBucket, GoalMarker } from '../utils/types'
+import type { ActivityBucket, GoalMarker, PitchOverlays } from '../utils/types'
 
 interface VideoControlsProps {
   running: boolean
@@ -19,6 +19,8 @@ interface VideoControlsProps {
   goalMarkers: GoalMarker[]
   summaryLoading: boolean
   homeTeam: string
+  overlays: PitchOverlays
+  onToggleOverlay: (key: keyof PitchOverlays) => void
   onPlay: () => void
   onPause: () => void
   onSeek: (targetTime: number) => void
@@ -45,10 +47,18 @@ function fmtTime(sec: number): string {
 
 const SPEEDS = [0.5, 1, 2, 4, 8]
 
+const OVERLAY_BTNS: { key: keyof PitchOverlays; icon: string; title: string }[] = [
+  { key: 'formation', icon: '👤', title: 'Lineup / Formation' },
+  { key: 'heatmap',   icon: '🔥', title: 'Heatmap' },
+  { key: 'shotmap',   icon: '🎯', title: 'Shot map' },
+  { key: 'vectors',   icon: '↗',  title: 'Build-up vectors' },
+]
+
 export const VideoControls: React.FC<VideoControlsProps> = ({
   running, speed, matchTime, totalTime, currentPeriod, matchEnded,
   connected, muted,
   homeColor, awayColor, activityBuckets, goalMarkers, summaryLoading, homeTeam,
+  overlays, onToggleOverlay,
   onPlay, onPause, onSeek, onSpeedChange, onMuteToggle,
   onOpenOverlay, onChangeMatch,
 }) => {
@@ -273,10 +283,28 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
           )}
         </button>
 
+        {/* Overlay quick toggles */}
+        <div className="flex items-center gap-0.5 rounded-lg border border-[#1e1e2e] overflow-hidden">
+          {OVERLAY_BTNS.map(({ key, icon, title }) => (
+            <button
+              key={key}
+              onClick={() => onToggleOverlay(key)}
+              title={title}
+              className={`w-8 h-8 flex items-center justify-center text-sm transition-colors
+                ${overlays[key]
+                  ? 'bg-amber-500/20 text-amber-300'
+                  : 'text-gray-600 hover:text-gray-300'
+                }`}
+            >
+              {icon}
+            </button>
+          ))}
+        </div>
+
         {/* Overlay / view settings */}
         <button
           onClick={onOpenOverlay}
-          title="Overlay settings"
+          title="More overlay settings"
           className="w-8 h-8 flex items-center justify-center rounded-lg border border-[#1e1e2e]
             text-gray-500 hover:text-gray-200 hover:border-[#2e2e45] transition-all"
         >

@@ -1,11 +1,12 @@
 # MatchCaster — AI Football Commentary Engine
 
-A fully local, multi-agent AI football commentary system. Replays real StatsBomb match data with live synthesized audio commentary from three distinct AI agents, displayed on an interactive pitch visualizer.
+A fully local, multi-agent AI football commentary system. Replays real StatsBomb match data with live synthesized audio commentary from two AI commentators, displayed on an interactive pitch visualizer.
 
 ```
-StatsBomb JSON → Replay Engine → Director → 3 LLM Agents (Ollama) → Piper TTS → Web Audio API
-                                          ↘ Analysis Engine ↗
-                                          → WebSocket → React Frontend
+StatsBomb JSON → Replay Engine → Director (look-ahead batch) → LLM (Ollama)
+                                                              → Piper TTS
+                               → Analysis Engine
+                               → WebSocket → React Frontend
 ```
 
 ---
@@ -17,7 +18,7 @@ StatsBomb JSON → Replay Engine → Director → 3 LLM Agents (Ollama) → Pipe
 | Python | 3.11+ | [python.org](https://python.org) |
 | Node.js | 18+ | [nodejs.org](https://nodejs.org) |
 | Ollama | latest | `brew install ollama` |
-| Piper TTS | latest | Standalone binary — see Step 3 |
+| Piper TTS | 2023.11.14-2 | Standalone bundle — see Step 3 |
 
 ---
 
@@ -26,7 +27,7 @@ StatsBomb JSON → Replay Engine → Director → 3 LLM Agents (Ollama) → Pipe
 ### 1. Start Ollama and pull the model
 
 ```bash
-brew install ollama          # macOS
+brew install ollama
 ollama serve &               # start in background (or open Ollama.app)
 ollama pull mistral:7b-instruct-q4_K_M
 ```
@@ -39,51 +40,48 @@ bash setup.sh
 cd ..
 ```
 
-This clones StatsBomb's open-data repository and copies the selected match files into `data/matches/` and `data/lineups/`.
+Clones StatsBomb's open-data repository and copies match files into `data/matches/` and `data/lineups/`.
 
-### 3. Install Piper TTS (optional — for audio commentary)
+### 3. Download Kokoro TTS model files (optional — for higher-quality audio commentary)
 
-> Text commentary works without Piper. Skip this step if you only want text.
+> Without Kokoro, MatchCaster falls back to the macOS built-in `say` command automatically. Commentary still plays — just with system voices. Skip to Step 4 if you want to get started quickly.
+
+MatchCaster uses **kokoro-onnx** for neural TTS (installed automatically via `pip install -r requirements.txt` in Step 4). It works on Python 3.13 and requires no binary — just two model files to download:
 
 ```bash
-cd /tmp
+mkdir -p ~/.local/share/kokoro
+cd ~/.local/share/kokoro
 
-# macOS Apple Silicon (M1/M2/M3):
-curl -L -o piper.tar.gz \
-  https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_aarch64.tar.gz
+curl -L -o kokoro-v1.0.onnx \
+  "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
 
-# macOS Intel (x86_64):
-# curl -L -o piper.tar.gz \
-#   https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_x64.tar.gz
+curl -L -o voices-v1.0.bin \
+  "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+```
 
-tar -xzf piper.tar.gz
-mkdir -p ~/.local/share/piper
-cp -r piper/* ~/.local/share/piper/
+| Voice | Agent | Character |
+|---|---|---|
+| `am_adam` | Play-by-play | American male, energetic |
+| `bm_george` | Analyst | British male, measured |
 
-# Wrapper script — required to fix dylib paths on macOS
-cat > ~/.local/share/piper/piper.sh << 'EOF'
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-DYLD_LIBRARY_PATH="$DIR:$DYLD_LIBRARY_PATH" exec "$DIR/piper" "$@"
-EOF
-chmod +x ~/.local/share/piper/piper.sh
-~/.local/share/piper/piper.sh --version   # should print version
+#### Verify:
 
-# Download the three commentator voices
-mkdir -p ~/.local/share/piper-voices
-cd ~/.local/share/piper-voices
-
-# Play-by-play (American male)
-wget -q "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx"
-wget -q "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"
-
-# Tactical analyst (British male)
-wget -q "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/medium/en_GB-alan-medium.onnx"
-wget -q "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json"
-
-# Stats analyst (American female)
-wget -q "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.onnx"
-wget -q "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.onnx.json"
+```bash
+python3 -c "
+from kokoro_onnx import Kokoro
+import subprocess, wave, io, numpy as np
+k = Kokoro(
+    model_path='$HOME/.local/share/kokoro/kokoro-v1.0.onnx',
+    voices_path='$HOME/.local/share/kokoro/voices-v1.0.bin',
+)
+samples, sr = k.create('And we are off!', voice='am_adam', speed=1.1, lang='en-us')
+pcm = (np.clip(samples, -1, 1) * 32767).astype(np.int16)
+buf = io.BytesIO()
+with wave.open(buf, 'wb') as wf:
+    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sr); wf.writeframes(pcm.tobytes())
+subprocess.run(['afplay', '-'], input=buf.getvalue())
+print('Kokoro OK')
+"
 ```
 
 ### 4. Install dependencies
@@ -104,11 +102,11 @@ cd frontend && npm install && cd ..
 ./start.sh
 ```
 
-This starts both the backend (port 8000) and frontend (port 5173) in a single terminal with color-coded logs. Press `Ctrl+C` to stop both.
+Starts both the backend (port 8000) and frontend (port 5173). Press `Ctrl+C` to stop.
 
-Then open **[http://localhost:5173](http://localhost:5173)** in your browser.
+Open **[http://localhost:5173](http://localhost:5173)** in your browser.
 
-> If you prefer to run them separately:
+> Run separately if preferred:
 > ```bash
 > # Terminal 1
 > cd backend && python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -121,7 +119,7 @@ Then open **[http://localhost:5173](http://localhost:5173)** in your browser.
 
 ## Using the app
 
-1. **Select a match** — the launch screen appears automatically. Click a match, choose a commentary style, then click **Watch Live →**.
+1. **Select a match** — the launch screen appears automatically. Pick a match, choose a commentary style, then click **Watch Live →**.
 
 2. **Controls** — the video player bar at the bottom:
    - `▶ / ⏸` — play and pause
@@ -135,7 +133,7 @@ Then open **[http://localhost:5173](http://localhost:5173)** in your browser.
 3. **Overlay Panel** (opened with `⚙`):
    - **Live** — real-time event markers and pass trails on the pitch
    - **Formation** — starting lineup with jersey numbers and player names
-   - **Heatmap** — territory map for home or away team (adjust detail with slider)
+   - **Heatmap** — territory map for home or away team
    - **Shots** — all shot locations, sized by xG, colored by outcome
    - **Build-up** — directional pass flow arrows by zone
 
@@ -157,61 +155,57 @@ Then open **[http://localhost:5173](http://localhost:5173)** in your browser.
 
 ## Architecture
 
+### Commentary System
+
+MatchCaster uses a two-commentator look-ahead batch system:
+
+1. The **Director** pre-generates commentary for the next 30 game-seconds of upcoming events (before they happen on the pitch).
+2. Each line is tagged to a specific event ID and TTS audio is synthesized in advance.
+3. When an event fires on the pitch, its pre-synthesized audio plays immediately — perfectly synced.
+
+**Play-by-Play commentator** — narrates the action. Fires every 30 game-seconds. Receives analyst context to weave into narration. Handles the opening scene-setter.
+
+**Analyst commentator** — expert macro insights. Fires every 5-7 game-minutes, on substitutions, and 2 minutes after goals. Silent during the first 5 minutes (PBP owns the opening). Feeds context back to PBP.
+
+### File Structure
+
 ```
 backend/
-├── config.py              All tunables
-├── main.py                FastAPI app + HTTP routes
+├── config.py                All tunables
+├── main.py                  FastAPI app + HTTP routes
 │
-├── replay/
-│   ├── clock.py           Async accelerated match clock (50 ms ticks)
-│   ├── loader.py          StatsBomb JSON → MatchEvent dataclasses
-│   └── emitter.py         Replay session management + seek support
+├── player/
+│   ├── clock.py             Async accelerated match clock (50 ms ticks)
+│   ├── loader.py            StatsBomb JSON → MatchEvent dataclasses
+│   └── emitter.py           Replay session management + seek support
+│
+├── analyser/
+│   ├── classifier.py        Event priority: critical / notable / routine
+│   ├── state.py             SharedMatchState (score, possession, stats)
+│   ├── engine.py            Real-time match analysis (momentum, xG, vectors)
+│   ├── spatial.py           Coordinate → pitch zone descriptions
+│   └── enrichment/
+│       ├── match_meta.py    Stadium, date, manager lookup
+│       ├── weather.py       Historical weather via Open-Meteo
+│       └── team_colors.py   Kit colors for ~40 teams
 │
 ├── director/
-│   ├── classifier.py      Event priority: critical / notable / routine
-│   ├── state.py           SharedMatchState (score, possession, stats)
-│   └── router.py          Orchestrator: routes events → agents, manages gaps
+│   └── router.py            Orchestrator: look-ahead batch scheduler,
+│                            analyst scheduler, event dispatch
 │
-├── agents/
-│   ├── base.py            BaseAgent + Ollama streaming
-│   ├── play_by_play.py    Live action narration
-│   ├── tactical.py        Formations and patterns
-│   └── stats.py           Stat facts
-│
-├── analysis/
-│   └── engine.py          Real-time match analysis (momentum, xG, build-up vectors)
-│
-├── enrichment/
-│   ├── match_meta.py      Stadium, date, manager lookup (StatsBomb match IDs)
-│   ├── weather.py         Historical weather via Open-Meteo (no API key)
-│   └── team_colors.py     Primary/secondary kit colors for ~40 teams
-│
-├── tts/
-│   ├── engine.py          Piper TTS wrapper → WAV bytes
-│   └── voices.py          Agent → voice model mapping
-│
-├── audio/
-│   └── queue.py           Priority audio queue
+├── commentator/
+│   ├── agents/
+│   │   ├── base.py          BaseAgent + Ollama streaming
+│   │   ├── play_by_play.py  Live action narration (batch JSON output)
+│   │   ├── analyst.py       Expert macro commentary (replaces tactical+stats)
+│   │   └── prompts.py       System prompts + user prompt builders
+│   ├── tts/
+│   │   ├── engine.py        Piper TTS wrapper → WAV bytes (+ macOS say fallback)
+│   │   └── voices.py        Agent → voice model mapping
+│   └── queue.py             AudioQueue + EventTaggedQueue (event-ID dispatch)
 │
 └── ws/
-    └── handler.py         WebSocket session: events, audio, state, seek
-
-frontend/src/
-├── App.tsx                Layout shell + state management
-├── hooks/
-│   ├── useWebSocket.ts    WS connection + message dispatch
-│   └── useAudioPlayer.ts  Web Audio API queue + text/audio sync
-├── utils/
-│   ├── types.ts           TypeScript interfaces
-│   └── pitchCoords.ts     StatsBomb → canvas coordinate mapping + pitch draw
-└── components/
-    ├── MatchSelectModal   Launch screen: match + commentary style picker
-    ├── MatchHeader        Score, status, goal scorers, venue, weather
-    ├── PitchCanvas        Canvas pitch: markers, trails, heatmap, shotmap, vectors
-    ├── VideoControls      Seek bar, ±10/30s, speed, mute, settings
-    ├── OverlayPanel       Floating pitch view/settings panel
-    ├── SidebarTabs        Stats / Live events / Squad tabs
-    └── CommentaryOverlay  Glass commentary bubble on pitch
+    └── handler.py           WebSocket session: events, audio, state, seek
 ```
 
 ---
@@ -224,10 +218,14 @@ All tunables live in `backend/config.py`:
 |---|---|---|
 | `DEFAULT_SPEED_MULTIPLIER` | `1.0` | Replay speed on startup |
 | `OLLAMA_MODEL` | `mistral:7b-instruct-q4_K_M` | LLM model |
-| `OLLAMA_TIMEOUT_SEC` | `8.0` | Kill slow LLM generations |
-| `MAX_OUTPUT_TOKENS` | `80` | Hard token cap per commentary line |
-| `MIN_GAP_GAME_SEC` | `6.0` | Minimum silence between utterances (game-time seconds) |
-| `DEAD_AIR_GAME_SEC` | `12.0` | Trigger fill commentary after this silence |
+| `OLLAMA_TIMEOUT_SEC` | `45.0` | Per-read timeout for Ollama streaming |
+| `MAX_OUTPUT_TOKENS` | `50` | Hard token cap per commentary batch |
+| `PBP_BATCH_WINDOW_MIN_SEC` | `30.0` | Minimum look-ahead window (game-sec) |
+| `PBP_BATCH_WINDOW_MAX_SEC` | `90.0` | Maximum look-ahead window at high speed |
+| `ANALYST_MIN_GAP_GAME_SEC` | `300.0` | Minimum silence between analyst firings |
+| `ANALYST_BLOCK_FIRST_SEC` | `300.0` | Analyst blocked for first 5 game-minutes |
+| `GOAL_ANALYST_COOLDOWN_SEC` | `120.0` | Analyst cooldown after a goal |
+| `MAX_EVENTS_PER_BATCH` | `8` | Max events sent to LLM per batch |
 
 ---
 
@@ -235,8 +233,9 @@ All tunables live in `backend/config.py`:
 
 | Failure | Fallback |
 |---|---|
-| Ollama offline / slow | Template commentary ("Shot from X — saved") |
-| Piper TTS missing | Text-only commentary, no audio |
+| Ollama offline / slow | Template commentary ("Shot — great save!") |
+| Piper TTS not installed | macOS `say` built-in voices |
+| Piper TTS crashes | macOS `say` built-in voices |
 | Audio queue overflow | Oldest items dropped |
 | WebSocket disconnect | Auto-reconnect after 2 s |
 | Unknown match ID | No metadata shown, colors use defaults |

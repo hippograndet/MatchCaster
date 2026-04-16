@@ -22,7 +22,7 @@ class MatchEvent:
     timestamp_sec: float                          # seconds from kickoff
     event_type: str                               # "Pass", "Shot", "Goal Keeper", etc.
     team: str
-    player: str
+    player: Optional[str]                         # None for team-level events (Starting XI etc.)
     position: tuple[float, float]                 # (x, y) StatsBomb coords
     end_position: Optional[tuple[float, float]]
     details: dict                                 # raw extra fields (xG, pass type, outcome…)
@@ -82,11 +82,13 @@ def _extract_end_position(event: dict) -> Optional[tuple[float, float]]:
     return None
 
 
-def _extract_player(event: dict) -> str:
+def _extract_player(event: dict) -> Optional[str]:
+    """Return player name, or None for team-level events (e.g. Starting XI)."""
     player = event.get("player", {})
     if isinstance(player, dict):
-        return player.get("name", "Unknown")
-    return str(player) if player else "Unknown"
+        name = player.get("name")
+        return name if name else None
+    return str(player) if player else None
 
 
 def _extract_team(event: dict) -> str:
@@ -332,6 +334,94 @@ def compute_snapshots(events: list[MatchEvent], home_team: str, away_team: str) 
     return snapshots
 
 
+def compute_goal_timeline(
+    events: list[MatchEvent],
+    home_team: str,
+    away_team: str,
+) -> list[dict]:
+    """
+    Return a lightweight list of goal events in chronological order.
+    Each entry:
+      {t, team, is_home, scorer, assist, score_home, score_away}
+    'assist' is the player from the most recent same-team Pass with
+    goal_assist=True within 10 seconds before the goal.
+    """
+    score_home = 0
+    score_away = 0
+    timeline: list[dict] = []
+
+    for i, ev in enumerate(events):
+        if ev.event_type != "Shot":
+            continue
+        if ev.details.get("shot_outcome") != "Goal":
+            continue
+
+        is_home = ev.team == home_team
+        if is_home:
+            score_home += 1
+        else:
+            score_away += 1
+
+        # Look back for an assist pass (same team, goal_assist=True, within 10s)
+        assist: Optional[str] = None
+        for prev in reversed(events[:i]):
+            if prev.timestamp_sec < ev.timestamp_sec - 10.0:
+                break
+            if (
+                prev.event_type == "Pass"
+                and prev.team == ev.team
+                and prev.details.get("goal_assist")
+            ):
+                assist = prev.player
+                break
+
+        timeline.append({
+            "t": ev.timestamp_sec,
+            "team": ev.team,
+            "is_home": is_home,
+            "scorer": ev.player,
+            "assist": assist,
+            "score_home": score_home,
+            "score_away": score_away,
+        })
+
+    return timeline
+
+
+def get_score_at(goal_timeline: list[dict], t: float) -> dict:
+    """Return {home, away} goal count at game time t (exclusive: goals at exactly t are included)."""
+    home, away = 0, 0
+    for g in goal_timeline:
+        if g["t"] > t:
+            break
+        if g["is_home"]:
+            home += 1
+        else:
+            away += 1
+    return {"home": home, "away": away}
+
+
+# Critical event types used for look-ahead speed control
+_CRITICAL_EVENT_TYPES = {"Shot"}
+_CRITICAL_CARD_TYPES  = {"Red Card", "Second Yellow"}
+
+
+def compute_critical_timeline(events: list[MatchEvent]) -> list[MatchEvent]:
+    """
+    Return only the high-stakes events (shots, red cards) used for
+    look-ahead speed-override in the replay engine.
+    """
+    out: list[MatchEvent] = []
+    for ev in events:
+        if ev.event_type in _CRITICAL_EVENT_TYPES:
+            out.append(ev)
+        elif ev.event_type in ("Foul Committed", "Bad Behaviour"):
+            card = ev.details.get("foul_card") or ev.details.get("card", "")
+            if card in _CRITICAL_CARD_TYPES:
+                out.append(ev)
+    return out
+
+
 def list_available_matches() -> list[dict]:
     """Return a list of available match IDs and their file sizes."""
     matches_dir = Path(MATCHES_DIR)
@@ -354,10 +444,10 @@ def list_available_matches() -> list[dict]:
             total_time = 5400  # 90 min default
             if data:
                 last = data[-1]
+                ts = last.get("timestamp", "00:00:00.000")
                 period = last.get("period", 2)
-                minute = last.get("minute", 90)
-                period_offsets = {1: 0, 2: 45, 3: 90, 4: 105, 5: 120}
-                total_time = (period_offsets.get(period, 0) + minute) * 60
+                period_offsets_sec = {1: 0, 2: 45 * 60, 3: 90 * 60, 4: 105 * 60, 5: 120 * 60}
+                total_time = int(_parse_timestamp(ts) + period_offsets_sec.get(period, 0))
             result.append({
                 "match_id": f.stem,
                 "teams": teams[:2],

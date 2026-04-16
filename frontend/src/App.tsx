@@ -1,8 +1,8 @@
 // frontend/src/App.tsx
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { PitchCanvas } from './components/PitchCanvas'
-import type { PassTrailPoint, DangerEntry } from './components/PitchCanvas'
+import type { PossessionSegment, DangerEntry } from './components/PitchCanvas'
 import { MatchHeader } from './components/MatchHeader'
 import { SidebarTabs } from './components/SidebarTabs'
 import { VideoControls } from './components/VideoControls'
@@ -21,7 +21,45 @@ import type {
 const IS_DEV = new URLSearchParams(window.location.search).has('dev')
 
 const MARKER_MAX_AGE_MS = 10_000
-const TRAIL_MAX_MS      = 14_000
+
+// Events that never affect possession state
+const POSSESSION_IGNORE = new Set([
+  'Pressure', 'Block', 'Duel', 'Foul Won', '50/50',
+  'Camera On', 'Camera off', 'Offside',
+])
+
+// Determines which events create a visual segment on the trail.
+// Shot is included so the trajectory is drawn as the final segment before possession ends.
+function getSegmentType(
+  eventType: string,
+  details: { cross?: boolean } | undefined
+): PossessionSegment['type'] | null {
+  if (eventType === 'Carry')   return 'carry'
+  if (eventType === 'Dribble') return 'dribble'
+  if (eventType === 'Shot')    return 'shot'
+  if (eventType === 'Pass')    return details?.cross ? 'cross' : 'pass'
+  return null
+}
+
+// Returns true when an event ends the current possession (even if same team).
+// Note: Shot is here AND in getSegmentType — the segment is created first, then possession ends.
+function endsPossession(eventType: string, details: {
+  pass_outcome?: string
+  dribble_outcome?: string
+} | undefined): boolean {
+  if (eventType === 'Shot')           return true
+  if (eventType === 'Clearance')      return true
+  if (eventType === 'Foul Committed') return true
+  if (eventType === 'Miscontrol')     return true
+  if (eventType === 'Error')          return true
+  if (eventType === 'Interception')   return true
+  if (eventType === 'Dribble' && details?.dribble_outcome === 'Incomplete') return true
+  if (eventType === 'Pass') {
+    const o = details?.pass_outcome
+    if (o && o !== 'Complete') return true  // incomplete / wayward / intercepted pass
+  }
+  return false
+}
 
 const SKIP_TYPES = new Set([
   'Ball Receipt*', 'Ball Recovery', 'Starting XI',
@@ -79,8 +117,14 @@ export default function App() {
   const [heatmapGranularity,setHeatmapGranularity]= useState(4)
   const [personality,       setPersonality]       = useState<Personality>('neutral')
   const [markers,           setMarkers]           = useState<PitchMarker[]>([])
-  const [passTrail,         setPassTrail]         = useState<PassTrailPoint[]>([])
+  const [activePossession,  setActivePossession]  = useState<PossessionSegment[] | null>(null)
+  const [lastPossession,    setLastPossession]    = useState<PossessionSegment[] | null>(null)
   const [dangerEntries,     setDangerEntries]     = useState<DangerEntry[]>([])
+
+  // Possession tracking — mutable refs so we can update mid-effect without stale closures
+  const possessionSegmentsRef  = useRef<PossessionSegment[]>([])
+  const possessionTeamRef      = useRef<string | null>(null)
+  const possessionIdRef        = useRef<number>(0)
   const [lineup,            setLineup]            = useState<LineupPlayer[]>([])
   const [heatmapHome,       setHeatmapHome]       = useState<number[][]>(emptyGrid)
   const [heatmapAway,       setHeatmapAway]       = useState<number[][]>(emptyGrid)
@@ -136,9 +180,71 @@ export default function App() {
       return [...filtered, marker]
     })
 
-    if (latest.event_type === 'Pass' && latest.end_position) {
-      const pt: PassTrailPoint = { from: latest.position, to: latest.end_position, team: latest.team, timestamp: now }
-      setPassTrail(prev => [...prev.filter(p => now - p.timestamp < TRAIL_MAX_MS), pt])
+    // ── Possession trail ─────────────────────────────────────────────────
+    if (!POSSESSION_IGNORE.has(latest.event_type)) {
+      const segType = getSegmentType(latest.event_type, latest.details)
+      const teamChanged = possessionTeamRef.current !== null && latest.team !== possessionTeamRef.current
+
+      if (teamChanged) {
+        // Ball changed hands — archive current possession as fallback
+        if (possessionSegmentsRef.current.length > 0) {
+          setLastPossession([...possessionSegmentsRef.current])
+        }
+        setActivePossession(null)
+        possessionSegmentsRef.current = []
+        possessionTeamRef.current = null
+      }
+
+      if (segType && latest.end_position) {
+        // Finalize the duration of the previous segment now that we know when the next event arrived
+        const segs = possessionSegmentsRef.current
+        if (segs.length > 0) {
+          const prev = segs[segs.length - 1]
+          prev.durationMs = Math.max(150, now - prev.arrivalWallMs)
+        }
+
+        // Open a new possession if none is active
+        if (!possessionTeamRef.current) {
+          possessionIdRef.current += 1
+          possessionTeamRef.current = latest.team
+        }
+
+        // Estimate duration for this segment — will be overwritten when next event arrives.
+        // Carries/dribbles are slow; passes snap across the pitch.
+        const [fx, fy] = latest.position
+        const [tx, ty] = latest.end_position
+        const dist = Math.sqrt((tx - fx) ** 2 + (ty - fy) ** 2)
+        const estimatedDuration = (segType === 'carry' || segType === 'dribble')
+          ? Math.max(600, dist * 120)
+          : Math.max(200, dist * 20)
+
+        const seg: PossessionSegment = {
+          from: latest.position,
+          to:   latest.end_position,
+          team: latest.team,
+          type: segType,
+          gameTimeSec:   latest.timestamp_sec,
+          arrivalWallMs: now,
+          durationMs:    estimatedDuration,
+          possessionId:  possessionIdRef.current,
+          segmentIndex:  possessionSegmentsRef.current.length,
+        }
+
+        possessionSegmentsRef.current = [...possessionSegmentsRef.current, seg]
+        setActivePossession([...possessionSegmentsRef.current])
+      }
+
+      // End possession after recording the final segment (shot, clearance, bad pass, etc.)
+      if (
+        possessionTeamRef.current &&
+        latest.team === possessionTeamRef.current &&
+        endsPossession(latest.event_type, latest.details)
+      ) {
+        setLastPossession([...possessionSegmentsRef.current])
+        setActivePossession(null)
+        possessionSegmentsRef.current = []
+        possessionTeamRef.current = null
+      }
     }
 
     if ((latest.event_type === 'Pass' || latest.event_type === 'Carry') && latest.end_position) {
@@ -154,7 +260,8 @@ export default function App() {
 
     const [x, y] = latest.position
     const col = Math.min(HEATMAP_COLS - 1, Math.floor((x / 120) * HEATMAP_COLS))
-    const row = Math.min(HEATMAP_ROWS - 1, Math.floor((y / 80)  * HEATMAP_ROWS))
+    // Flip Y to match sbToCanvas convention (SB y=0 → canvas bottom, y=80 → canvas top)
+    const row = Math.min(HEATMAP_ROWS - 1, Math.floor(((80 - y) / 80) * HEATMAP_ROWS))
     const isHome = matchState && latest.team === matchState.home_team
     const setter = isHome ? setHeatmapHome : setHeatmapAway
     setter(prev => {
@@ -219,7 +326,18 @@ export default function App() {
   // ── Handlers ──────────────────────────────────────────────────────────
   const handlePlay        = useCallback(() => sendAction('play', { speed }), [sendAction, speed])
   const handlePause       = useCallback(() => sendAction('pause'), [sendAction])
-  const handleSeek        = useCallback((t: number) => sendAction('seek', { target_time: t }), [sendAction])
+  const handleSeek        = useCallback((t: number) => {
+    sendAction('seek', { target_time: t })
+    // Clear all stale visual state so nothing from the old position lingers
+    setActivePossession(null)
+    setLastPossession(null)
+    possessionSegmentsRef.current = []
+    possessionTeamRef.current = null
+    possessionIdRef.current += 1
+    setMarkers([])
+    setDangerEntries([])
+    setLatestCommentary(null)
+  }, [sendAction])
   const handleSpeedChange = useCallback((s: number) => sendAction('set_speed', { speed: s }), [sendAction])
   const handlePersonalityChange = useCallback((p: Personality) => {
     setPersonality(p)
@@ -233,7 +351,8 @@ export default function App() {
   const handleStart = useCallback((matchId: string, pers: Personality) => {
     setShowModal(false)
     // Reset all pitch state
-    setMarkers([]); setPassTrail([]); setDangerEntries([]); setLineup([])
+    setMarkers([]); setActivePossession(null); setLastPossession([]); setDangerEntries([]); setLineup([])
+    possessionSegmentsRef.current = []; possessionTeamRef.current = null; possessionIdRef.current = 0
     setHeatmapHome(emptyGrid()); setHeatmapAway(emptyGrid())
     setActivityBuckets([]); setGoalMarkers([])
     setOverlays({ live: true, formation: false, heatmap: false, shotmap: false, vectors: false })
@@ -321,7 +440,9 @@ export default function App() {
             <>
               <PitchCanvas
                 markers={markers}
-                passTrail={passTrail}
+                possessionTrail={activePossession ?? lastPossession ?? []}
+                isActivePossession={activePossession !== null}
+                matchSpeed={speed}
                 dangerEntries={dangerEntries}
                 homeTeam={homeTeam}
                 awayTeam={awayTeam}
@@ -388,6 +509,8 @@ export default function App() {
         goalMarkers={goalMarkers}
         summaryLoading={summaryLoading}
         homeTeam={homeTeam}
+        overlays={overlays}
+        onToggleOverlay={toggleOverlay}
         onPlay={handlePlay}
         onPause={handlePause}
         onSeek={handleSeek}
@@ -398,7 +521,12 @@ export default function App() {
       />
 
       {/* Dev inspector — only rendered when ?dev=true */}
-      {IS_DEV && <DevPanel traces={debugTraces} />}
+      {IS_DEV && (
+        <DevPanel
+          traces={debugTraces}
+          onForceTrigger={() => sendAction('force_commentary')}
+        />
+      )}
     </div>
   )
 }

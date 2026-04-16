@@ -6,7 +6,7 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
+      "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
         "passes_completed": 0,
@@ -18,7 +18,7 @@
         "xg": 0.0,
         "possession_events": 0
       },
-      "Turkey": {
+      "Italy": {
         "shots": 0,
         "shots_on_target": 0,
         "passes_completed": 0,
@@ -39,18 +39,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 1,
-        "shots_on_target": 0,
-        "passes_completed": 41,
-        "passes_attempted": 45,
-        "fouls": 0,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.052,
-        "possession_events": 101
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -62,6 +50,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 45
+      },
+      "Italy": {
+        "shots": 1,
+        "shots_on_target": 0,
+        "passes_completed": 41,
+        "passes_attempted": 45,
+        "fouls": 0,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.052,
+        "possession_events": 101
       }
     }
   },
@@ -72,18 +72,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 1,
-        "shots_on_target": 0,
-        "passes_completed": 73,
-        "passes_attempted": 85,
-        "fouls": 0,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.052,
-        "possession_events": 194
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -95,6 +83,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 109
+      },
+      "Italy": {
+        "shots": 1,
+        "shots_on_target": 0,
+        "passes_completed": 73,
+        "passes_attempted": 85,
+        "fouls": 0,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.052,
+        "possession_events": 194
       }
     }
   },
@@ -105,18 +105,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 2,
-        "shots_on_target": 0,
-        "passes_completed": 111,
-        "passes_attempted": 127,
-        "fouls": 2,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.061,
-        "possession_events": 288
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -128,6 +116,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 183
+      },
+      "Italy": {
+        "shots": 2,
+        "shots_on_target": 0,
+        "passes_completed": 111,
+        "passes_attempted": 127,
+        "fouls": 2,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.061,
+        "possession_events": 288
       }
     }
   },
@@ -138,18 +138,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 4,
-        "shots_on_target": 0,
-        "passes_completed": 154,
-        "passes_attempted": 177,
-        "fouls": 2,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.167,
-        "possession_events": 392
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -161,6 +149,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 227
+      },
+      "Italy": {
+        "shots": 4,
+        "shots_on_target": 0,
+        "passes_completed": 154,
+        "passes_attempted": 177,
+        "fouls": 2,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.167,
+        "possession_events": 392
       }
     }
   },
@@ -171,18 +171,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 7,
-        "shots_on_target": 1,
-        "passes_completed": 181,
-        "passes_attempted": 211,
-        "fouls": 2,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.343,
-        "possession_events": 471
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -194,6 +182,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 284
+      },
+      "Italy": {
+        "shots": 7,
+        "shots_on_target": 1,
+        "passes_completed": 181,
+        "passes_attempted": 211,
+        "fouls": 2,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.343,
+        "possession_events": 471
       }
     }
   },
@@ -204,18 +204,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 8,
-        "shots_on_target": 1,
-        "passes_completed": 209,
-        "passes_attempted": 245,
-        "fouls": 3,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.38,
-        "possession_events": 556
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -227,6 +215,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 376
+      },
+      "Italy": {
+        "shots": 8,
+        "shots_on_target": 1,
+        "passes_completed": 209,
+        "passes_attempted": 245,
+        "fouls": 3,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.38,
+        "possession_events": 556
       }
     }
   },
@@ -237,18 +237,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 9,
-        "shots_on_target": 1,
-        "passes_completed": 248,
-        "passes_attempted": 289,
-        "fouls": 3,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.418,
-        "possession_events": 649
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -260,6 +248,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 414
+      },
+      "Italy": {
+        "shots": 9,
+        "shots_on_target": 1,
+        "passes_completed": 248,
+        "passes_attempted": 289,
+        "fouls": 3,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.418,
+        "possession_events": 649
       }
     }
   },
@@ -270,18 +270,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 11,
-        "shots_on_target": 2,
-        "passes_completed": 286,
-        "passes_attempted": 330,
-        "fouls": 3,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.494,
-        "possession_events": 733
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -293,6 +281,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 485
+      },
+      "Italy": {
+        "shots": 11,
+        "shots_on_target": 2,
+        "passes_completed": 286,
+        "passes_attempted": 330,
+        "fouls": 3,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.494,
+        "possession_events": 733
       }
     }
   },
@@ -303,18 +303,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 14,
-        "shots_on_target": 3,
-        "passes_completed": 335,
-        "passes_attempted": 383,
-        "fouls": 3,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.717,
-        "possession_events": 852
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -326,6 +314,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 528
+      },
+      "Italy": {
+        "shots": 14,
+        "shots_on_target": 3,
+        "passes_completed": 335,
+        "passes_attempted": 383,
+        "fouls": 3,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.717,
+        "possession_events": 852
       }
     }
   },
@@ -336,18 +336,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 14,
-        "shots_on_target": 3,
-        "passes_completed": 360,
-        "passes_attempted": 413,
-        "fouls": 5,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.717,
-        "possession_events": 935
-      },
       "Turkey": {
         "shots": 0,
         "shots_on_target": 0,
@@ -359,6 +347,18 @@
         "goals": 0,
         "xg": 0.0,
         "possession_events": 595
+      },
+      "Italy": {
+        "shots": 14,
+        "shots_on_target": 3,
+        "passes_completed": 360,
+        "passes_attempted": 413,
+        "fouls": 5,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.717,
+        "possession_events": 935
       }
     }
   },
@@ -369,18 +369,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 16,
-        "shots_on_target": 4,
-        "passes_completed": 382,
-        "passes_attempted": 439,
-        "fouls": 5,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.82,
-        "possession_events": 1006
-      },
       "Turkey": {
         "shots": 1,
         "shots_on_target": 0,
@@ -392,6 +380,18 @@
         "goals": 0,
         "xg": 0.011,
         "possession_events": 652
+      },
+      "Italy": {
+        "shots": 16,
+        "shots_on_target": 4,
+        "passes_completed": 382,
+        "passes_attempted": 439,
+        "fouls": 5,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.82,
+        "possession_events": 1006
       }
     }
   },
@@ -402,18 +402,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 21,
-        "shots_on_target": 5,
-        "passes_completed": 396,
-        "passes_attempted": 460,
-        "fouls": 5,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.995,
-        "possession_events": 1069
-      },
       "Turkey": {
         "shots": 1,
         "shots_on_target": 0,
@@ -425,6 +413,18 @@
         "goals": 0,
         "xg": 0.011,
         "possession_events": 700
+      },
+      "Italy": {
+        "shots": 21,
+        "shots_on_target": 5,
+        "passes_completed": 396,
+        "passes_attempted": 460,
+        "fouls": 5,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.995,
+        "possession_events": 1069
       }
     }
   },
@@ -435,18 +435,6 @@
       "away": 0
     },
     "stats": {
-      "Italy": {
-        "shots": 21,
-        "shots_on_target": 5,
-        "passes_completed": 431,
-        "passes_attempted": 499,
-        "fouls": 6,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 0,
-        "xg": 0.995,
-        "possession_events": 1167
-      },
       "Turkey": {
         "shots": 1,
         "shots_on_target": 0,
@@ -458,28 +446,28 @@
         "goals": 0,
         "xg": 0.011,
         "possession_events": 762
+      },
+      "Italy": {
+        "shots": 21,
+        "shots_on_target": 5,
+        "passes_completed": 431,
+        "passes_attempted": 499,
+        "fouls": 6,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 0,
+        "xg": 0.995,
+        "possession_events": 1167
       }
     }
   },
   {
     "t": 4200,
     "score": {
-      "home": 1,
-      "away": 0
+      "home": 0,
+      "away": 1
     },
     "stats": {
-      "Italy": {
-        "shots": 23,
-        "shots_on_target": 7,
-        "passes_completed": 443,
-        "passes_attempted": 514,
-        "fouls": 6,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 1,
-        "xg": 1.398,
-        "possession_events": 1215
-      },
       "Turkey": {
         "shots": 1,
         "shots_on_target": 0,
@@ -491,28 +479,28 @@
         "goals": 0,
         "xg": 0.011,
         "possession_events": 853
+      },
+      "Italy": {
+        "shots": 23,
+        "shots_on_target": 7,
+        "passes_completed": 443,
+        "passes_attempted": 514,
+        "fouls": 6,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 1,
+        "xg": 1.398,
+        "possession_events": 1215
       }
     }
   },
   {
     "t": 4500,
     "score": {
-      "home": 1,
-      "away": 0
+      "home": 0,
+      "away": 1
     },
     "stats": {
-      "Italy": {
-        "shots": 23,
-        "shots_on_target": 7,
-        "passes_completed": 485,
-        "passes_attempted": 559,
-        "fouls": 6,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 1,
-        "xg": 1.398,
-        "possession_events": 1317
-      },
       "Turkey": {
         "shots": 1,
         "shots_on_target": 0,
@@ -524,28 +512,28 @@
         "goals": 0,
         "xg": 0.011,
         "possession_events": 918
+      },
+      "Italy": {
+        "shots": 23,
+        "shots_on_target": 7,
+        "passes_completed": 485,
+        "passes_attempted": 559,
+        "fouls": 6,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 1,
+        "xg": 1.398,
+        "possession_events": 1317
       }
     }
   },
   {
     "t": 4800,
     "score": {
-      "home": 2,
-      "away": 0
+      "home": 0,
+      "away": 2
     },
     "stats": {
-      "Italy": {
-        "shots": 24,
-        "shots_on_target": 8,
-        "passes_completed": 512,
-        "passes_attempted": 591,
-        "fouls": 6,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 2,
-        "xg": 1.59,
-        "possession_events": 1393
-      },
       "Turkey": {
         "shots": 1,
         "shots_on_target": 0,
@@ -557,28 +545,28 @@
         "goals": 0,
         "xg": 0.011,
         "possession_events": 963
+      },
+      "Italy": {
+        "shots": 24,
+        "shots_on_target": 8,
+        "passes_completed": 512,
+        "passes_attempted": 591,
+        "fouls": 6,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 2,
+        "xg": 1.59,
+        "possession_events": 1393
       }
     }
   },
   {
     "t": 5100,
     "score": {
-      "home": 2,
-      "away": 0
+      "home": 0,
+      "away": 2
     },
     "stats": {
-      "Italy": {
-        "shots": 24,
-        "shots_on_target": 8,
-        "passes_completed": 526,
-        "passes_attempted": 609,
-        "fouls": 6,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 2,
-        "xg": 1.59,
-        "possession_events": 1430
-      },
       "Turkey": {
         "shots": 1,
         "shots_on_target": 0,
@@ -590,28 +578,28 @@
         "goals": 0,
         "xg": 0.011,
         "possession_events": 1011
+      },
+      "Italy": {
+        "shots": 24,
+        "shots_on_target": 8,
+        "passes_completed": 526,
+        "passes_attempted": 609,
+        "fouls": 6,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 2,
+        "xg": 1.59,
+        "possession_events": 1430
       }
     }
   },
   {
     "t": 5400,
     "score": {
-      "home": 2,
-      "away": 0
+      "home": 0,
+      "away": 2
     },
     "stats": {
-      "Italy": {
-        "shots": 24,
-        "shots_on_target": 8,
-        "passes_completed": 547,
-        "passes_attempted": 635,
-        "fouls": 8,
-        "yellow_cards": 0,
-        "red_cards": 0,
-        "goals": 2,
-        "xg": 1.59,
-        "possession_events": 1493
-      },
       "Turkey": {
         "shots": 1,
         "shots_on_target": 0,
@@ -623,6 +611,18 @@
         "goals": 0,
         "xg": 0.011,
         "possession_events": 1064
+      },
+      "Italy": {
+        "shots": 24,
+        "shots_on_target": 8,
+        "passes_completed": 547,
+        "passes_attempted": 635,
+        "fouls": 8,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "goals": 2,
+        "xg": 1.59,
+        "possession_events": 1493
       }
     }
   }

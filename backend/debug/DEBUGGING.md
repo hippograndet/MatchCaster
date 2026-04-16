@@ -17,7 +17,7 @@ MATCH_ID=69249 python3 debug/test_player.py   # test a different match
 
 **What to check:**
 - `Available matches` — are all 5+ matches listed? Are team names correct?
-- `Duration` — should be ~90–95 min (5400–5700s). Anything outside that is suspicious.
+- `Duration` — should be ~90–100 min (5400–6000s). Anything outside that is suspicious.
 - `First timestamp` should be `0.0s`. If not, period offset logic is broken.
 - `Top event types` — Pass and Ball Receipt should dominate (~25–30% each). If Shot is #1, something is wrong.
 - `First Shot details` — does it have `shot_outcome`, `xg`, `position`? Missing fields = parsing bug.
@@ -47,6 +47,14 @@ python3 debug/test_analyser.py
 - `Spatial` samples — read the 5 descriptions. Do they make geographic sense for the coordinates?
 - `Enrichment` — check stadium/city/date are correct for the match you know.
 
+**AnalysisPacket context fields** (the four text layers fed to AI agents):
+- `instant_text` — should name a team and describe the last 60s (e.g. "Italy in control | 3 shots"). Empty only if no events in the last 60s.
+- `short_term_text` — should read as natural sentences: momentum winner, pressing info, pass chains. Generic or empty after 1000 events = engine not accumulating.
+- `long_term_text` — should contain xG and shot totals. Empty if no shots have occurred yet.
+- `match_totals_text` — a clean table: shots (with on-target split), xG, box entries, match control. This is what the Stats agent reads — verify the numbers match what you see in `Score` and shots above.
+
+If any field is empty when it shouldn't be, check `analyser/engine.py` → the corresponding `_build_*_text()` method.
+
 **Snapshots produced** (inspect manually if something looks wrong):
 - `debug/snapshots/analyser_classification_3788741.json` — full list of CRITICAL events
 - `debug/snapshots/analyser_state_3788741.json` — state dict at the 500-event mark
@@ -67,6 +75,11 @@ OLLAMA=1 python3 debug/test_commentator.py   # if Ollama is running
 - Does the trigger event description make sense spatially? (e.g. "in the right side of the box" for a shot near goal)
 - Is `RECENT COMMENTARY` showing `(none)` when no prior utterances exist? Good.
 - Are the three agents getting meaningfully different system prompts? (PBP = energetic, Tactical = measured, Stats = factual)
+- Are the three agents getting meaningfully different **context sections**?
+  - PBP prompt should have `RIGHT NOW:` and `LAST 3 MIN:` sections
+  - Tactical prompt should have `RECENT PATTERN:` and `MATCH PICTURE:` sections
+  - Stats prompt should have `MATCH TOTALS:` with a shot/xG/box-entries table
+  - If all three show identical context, `Director._get_agent_context()` is not routing correctly.
 
 *Fallback output:*
 - PBP should name the player and location. Generic `"— event_type for team"` = fallback didn't match any condition.

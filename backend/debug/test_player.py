@@ -20,7 +20,7 @@ SNAPSHOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapsh
 
 # ── 1. Loader ──────────────────────────────────────────────────────────────
 
-from player.loader import load_events, list_available_matches, compute_snapshots
+from player.loader import load_events, list_available_matches, compute_snapshots, compute_goal_timeline, get_score_at
 
 print("=" * 60)
 print("MATCH PLAYER — subsystem test")
@@ -34,10 +34,14 @@ for m in matches:
 
 print(f"\n[loader] Loading match {MATCH_ID} ...")
 events = load_events(MATCH_ID)
+last = events[-1]
+period_label = (
+    f" — period {last.details.get('period', '?')}" if last.event_type == "Half End" else ""
+)
 print(f"  Total events    : {len(events)}")
 print(f"  First timestamp : {events[0].timestamp_sec:.1f}s  ({events[0].event_type})")
-print(f"  Last  timestamp : {events[-1].timestamp_sec:.1f}s  ({events[-1].event_type})")
-print(f"  Duration        : {events[-1].timestamp_sec / 60:.1f} game-minutes")
+print(f"  Last  timestamp : {last.timestamp_sec:.1f}s  ({last.event_type}{period_label})")
+print(f"  Duration        : {last.timestamp_sec / 60:.1f} game-minutes")
 
 counts = Counter(e.event_type for e in events)
 print(f"\n[loader] Top 10 event types:")
@@ -54,12 +58,30 @@ for target in ("Shot", "Substitution"):
         print(f"  position: {sample.position}")
         print(f"  details : {dict(list(sample.details.items())[:4])}")
 
-teams = list({e.team for e in events if e.team != "Unknown"})
+teams = list({e.team for e in events if e.team})
 if len(teams) >= 2:
-    snaps = compute_snapshots(events, teams[0], teams[1])
-    print(f"\n[loader] Snapshots computed: {len(snaps)} (every 5 min)")
+    home_team, away_team = teams[0], teams[1]
+
+    # ── Goal timeline (exact, derivable at any time T) ──
+    goal_tl = compute_goal_timeline(events, home_team, away_team)
+    print(f"\n[loader] Goal timeline: {len(goal_tl)} goal(s)")
+    for g in goal_tl:
+        min_str = f"{g['t'] / 60:.0f}'"
+        scorer = g["scorer"] or g["team"]
+        assist_str = f"  assist: {g['assist']}" if g["assist"] else ""
+        print(f"  {min_str}  {g['team']}  {scorer}{assist_str}  → {g['score_home']}–{g['score_away']}")
+
+    # Spot-check: score at 45 min
+    score_45 = get_score_at(goal_tl, 45 * 60)
+    score_ft = get_score_at(goal_tl, events[-1].timestamp_sec)
+    print(f"  Score @ 45 min : {score_45}")
+    print(f"  Score @ FT     : {score_ft}")
+
+    # ── Stats snapshots (every 5 min, for seek-restoration) ──
+    snaps = compute_snapshots(events, home_team, away_team)
+    print(f"\n[loader] Stat snapshots: {len(snaps)} (every 5 min)")
     for s in snaps[:3]:
-        print(f"  t={s['t']:.0f}s  score={s['score']}")
+        print(f"  t={s['t']:.0f}s  stats sample: shots_home={s['stats'].get(home_team, {}).get('shots', 0)}")
 
     # Dump snapshot to debug/snapshots/ for cross-subsystem reproducibility
     snap_path = os.path.join(SNAPSHOTS_DIR, f"player_snapshots_{MATCH_ID}.json")
@@ -92,9 +114,10 @@ asyncio.run(run_clock_test())
 if ticks_received:
     print(f"  Ticks received  : {len(ticks_received)}")
     print(f"  Match time range: {ticks_received[0]}s → {ticks_received[-1]}s")
-    actual_advance = ticks_received[-1] - ticks_received[0]
+    # Total advance from clock start (0), not delta between ticks
+    actual_advance = ticks_received[-1]
     expected = 0.2 * 10
-    ok = abs(actual_advance - expected) < 0.5
+    ok = abs(actual_advance - expected) < 1.0   # ±1s tolerance for asyncio jitter
     print(f"  Advance ~{expected:.1f}s game-time: {'OK' if ok else 'WARN'} ({actual_advance:.2f}s)")
 else:
     print("  WARNING: no ticks received")

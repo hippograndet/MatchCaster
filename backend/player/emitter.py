@@ -7,19 +7,23 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable, Optional
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 
-from config import EVENT_BUFFER_LOOKAHEAD_SEC
-from player.loader import MatchEvent, load_events, list_available_matches
+from config import EVENT_BUFFER_LOOKAHEAD_SEC, DEFAULT_SPEED_MULTIPLIER
+from player.loader import MatchEvent, load_events, list_available_matches, compute_critical_timeline
 from player.clock import MatchClock
 
 logger = logging.getLogger("[EMITTER]")
 
 router = APIRouter()
+
+# Look-ahead window (game-seconds): if a critical event is within this window,
+# trigger anticipation slow-down.
+ANTICIPATION_WINDOW_SEC = 30.0
 
 # Global registry: match_id → (clock, events, event_pointer)
 _active_replays: dict[str, "ReplaySession"] = {}
@@ -32,9 +36,18 @@ class ReplaySession:
         self.match_id = match_id
         self.clock = MatchClock()
         self.events: list[MatchEvent] = load_events(match_id)
+        self.critical_timeline: list[MatchEvent] = compute_critical_timeline(self.events)
         self._event_index: int = 0
+        self._critical_index: int = 0        # pointer into critical_timeline for look-ahead
         self._subscribers: list[asyncio.Queue] = []
+        self._look_ahead_cb: "Callable[[str, float], None] | None" = None
         self.clock.register_tick(self._on_tick)
+
+    def register_look_ahead(self, cb: "Callable[[str, float], None]") -> None:
+        """Register callback fired when a critical event is approaching.
+        Signature: cb(event_type: str, game_seconds_until: float)
+        """
+        self._look_ahead_cb = cb
 
     async def _on_tick(self, match_time: float) -> None:
         """Called every 50 ms. Emit all events whose timestamp ≤ match_time."""
@@ -46,16 +59,29 @@ class ReplaySession:
             fired.append(self.events[self._event_index])
             self._event_index += 1
 
-        if not fired:
-            return
+        if fired:
+            for ev in fired:
+                payload = _event_to_dict(ev)
+                for q in list(self._subscribers):
+                    try:
+                        q.put_nowait(payload)
+                    except asyncio.QueueFull:
+                        pass  # subscriber too slow; skip
 
-        for ev in fired:
-            payload = _event_to_dict(ev)
-            for q in list(self._subscribers):
-                try:
-                    q.put_nowait(payload)
-                except asyncio.QueueFull:
-                    pass  # subscriber too slow; skip
+        # Advance the critical look-ahead pointer and fire callback if needed
+        if self._look_ahead_cb and self.clock.speed > 2.0:
+            # Skip past critical events already passed
+            while (
+                self._critical_index < len(self.critical_timeline)
+                and self.critical_timeline[self._critical_index].timestamp_sec <= match_time
+            ):
+                self._critical_index += 1
+            # Check if the next critical event is within the anticipation window
+            if self._critical_index < len(self.critical_timeline):
+                next_critical = self.critical_timeline[self._critical_index]
+                gap = next_critical.timestamp_sec - match_time
+                if gap <= ANTICIPATION_WINDOW_SEC:
+                    self._look_ahead_cb(next_critical.event_type, gap)
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=100)
@@ -68,6 +94,7 @@ class ReplaySession:
 
     def reset(self) -> None:
         self._event_index = 0
+        self._critical_index = 0
         self.clock.reset(0.0)
 
     def seek(self, target_time: float) -> None:
@@ -82,6 +109,23 @@ class ReplaySession:
                 break
         else:
             self._event_index = len(self.events)
+        # Reposition critical look-ahead pointer
+        self._critical_index = 0
+        for i, ev in enumerate(self.critical_timeline):
+            if ev.timestamp_sec > target_time:
+                self._critical_index = i
+                break
+        else:
+            self._critical_index = len(self.critical_timeline)
+
+
+def _display_player(ev: MatchEvent) -> str:
+    """Return a human-readable player identifier, falling back gracefully."""
+    if ev.player:
+        return ev.player
+    if ev.event_type == "Starting XI":
+        return ev.team
+    return ev.team
 
 
 def _event_to_dict(ev: MatchEvent) -> dict:
@@ -90,7 +134,7 @@ def _event_to_dict(ev: MatchEvent) -> dict:
         "timestamp_sec": ev.timestamp_sec,
         "event_type": ev.event_type,
         "team": ev.team,
-        "player": ev.player,
+        "player": _display_player(ev),
         "position": list(ev.position),
         "end_position": list(ev.end_position) if ev.end_position else None,
         "details": ev.details,
@@ -121,7 +165,7 @@ async def list_matches():
 
 
 @router.get("/api/events/stream")
-async def stream_events(match_id: str, speed: float = 5.0):
+async def stream_events(match_id: str, speed: float = DEFAULT_SPEED_MULTIPLIER):
     """
     SSE endpoint. Streams MatchEvents as JSON in real-time according to
     the match clock. The director subscribes to this internally; the

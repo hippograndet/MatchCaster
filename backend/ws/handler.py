@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from commentator.queue import AudioQueue
+from commentator.queue import AudioQueue, EventTaggedQueue
 from director.router import Director
 from analyser.state import SharedMatchState
 from player.emitter import get_or_create_session, ReplaySession
@@ -33,15 +33,18 @@ class MatchSession:
 
         self.state = SharedMatchState()
         self.audio_queue = AudioQueue()
+        self.event_tagged_queue = EventTaggedQueue()
         self.director = Director(
             state=self.state,
             audio_queue=self.audio_queue,
+            event_tagged_queue=self.event_tagged_queue,
             broadcast_cb=self._broadcast,
             speed_cb=self._on_speed_override,
         )
 
         self.replay_session = get_or_create_session(match_id)
         self.replay_session.clock.register_tick(self._on_clock_tick)
+        self.replay_session.register_look_ahead(self._on_approaching_critical)
 
         self._audio_pump_task: Optional[asyncio.Task] = None
         self._clock_broadcast_task: Optional[asyncio.Task] = None
@@ -56,6 +59,9 @@ class MatchSession:
         self._init_teams()
         self._load_nicknames()
         self._snapshots: list[dict] = []   # populated lazily on first seek
+
+        # Give the director all events immediately (don't wait for async enrichment)
+        self.director.set_all_events(self.replay_session.events)
 
     # ------------------------------------------------------------------
     # Init
@@ -114,14 +120,14 @@ class MatchSession:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        self.director.is_paused = True   # wait for explicit 'play' from client
         self.director.start()
         self._audio_pump_task = asyncio.get_event_loop().create_task(self._audio_pump())
         self._clock_broadcast_task = asyncio.get_event_loop().create_task(self._clock_broadcast())
         self._event_queue = self.replay_session.subscribe()
         self._event_consumer_task = asyncio.get_event_loop().create_task(self._event_consumer())
         asyncio.get_event_loop().create_task(self._load_enrichment())
-        if not self.replay_session.clock.is_running:
-            self.replay_session.clock.start()
+        # Clock starts only when the frontend sends 'play', not on session creation
         logger.info(f"MatchSession started: {self.match_id}")
 
     async def _load_enrichment(self) -> None:
@@ -161,6 +167,8 @@ class MatchSession:
         # Initialise real-time analysis engine
         if home and away:
             self._analysis = MatchAnalysisEngine(home, away)
+
+        # (events already set in __init__; just refresh match context after enrichment)
 
         # Broadcast enriched meta to all connected clients
         await self._broadcast({
@@ -234,6 +242,9 @@ class MatchSession:
         ]
         if events_in_range:
             self.state.update(events_in_range, target_time)
+            # Also rebuild analysis engine context from the same range
+            if self._analysis:
+                self._analysis.update(events_in_range, target_time)
 
         logger.debug(
             f"Stats restored to {target_time:.0f}s from snapshot@{snap['t']:.0f}s "
@@ -304,7 +315,7 @@ class MatchSession:
             self.replay_session.clock.set_speed(speed)
 
         elif action == "set_personality":
-            self.director.personality = msg.get("personality", "neutral")
+            self.director.set_personality(msg.get("personality", "neutral"))
 
         elif action == "rewind":
             # Rewind 30 match-seconds (legacy — prefer 'seek' with target_time)
@@ -314,7 +325,8 @@ class MatchSession:
             self.replay_session.clock.pause()
             self.replay_session.seek(target)
             self.director.set_paused(True)
-            self.director._last_utterance_game_time = target - 999
+            self.audio_queue.clear()
+            self.director.on_seek(target)
             if not was_paused:
                 self.replay_session.clock.resume()
                 self.director.set_paused(False)
@@ -326,8 +338,16 @@ class MatchSession:
             self.replay_session.clock.pause()
             self.replay_session.seek(target)
             self.director.set_paused(True)
-            self.director._last_utterance_game_time = target - 999
-            # Restore cumulative stats to the target time
+
+            # Flush stale audio and pre-generated commentary, reset batch pointer
+            self.audio_queue.clear()
+            self.director.on_seek(target)
+
+            # Reset analysis engine so agents get correct context at the new position
+            if self._analysis:
+                self._analysis.reset()
+
+            # Restore cumulative stats (score, totals) and rebuild analysis context
             self._restore_stats_at(target)
             # Broadcast updated state immediately so the frontend sees the
             # correct score/stats before the next clock tick
@@ -351,9 +371,12 @@ class MatchSession:
             self.state = SharedMatchState()
             self._init_teams()
             self.audio_queue.clear()
+            self.event_tagged_queue.clear()
             self.director.state = self.state
             self.director.is_paused = False
             self.director._match_ended = False
+            self.director._opening_done = False
+            self.director._next_batch_game_time = 0.0
             self._goal_scorers = {}
             self.replay_session.clock.start()
 
@@ -376,6 +399,10 @@ class MatchSession:
             "speed": speed,
             "running": self.replay_session.clock.is_running,
         }))
+
+    def _on_approaching_critical(self, event_type: str, in_game_sec: float) -> None:
+        """Forwarded from ReplaySession look-ahead — no-op in batch system."""
+        pass
 
     # ------------------------------------------------------------------
     # Internal tasks
@@ -415,7 +442,11 @@ class MatchSession:
                         self._analysis.update(events, clock_time)
                         snapshot = self._analysis.get_context_snapshot()
                         self.director.set_analysis_snapshot(snapshot)
+                    # State updates + trigger detection
                     await self.director.process_events(events, clock_time)
+                    # Dispatch pre-generated commentary lines for each arriving event
+                    for ev in events:
+                        await self.director.dispatch_for_event(ev)
                 except Exception as exc:
                     logger.error(f"Director error: {exc}")
 
@@ -566,3 +597,7 @@ async def ws_match(websocket: WebSocket, match_id: str = ""):
         logger.error(f"WebSocket error: {exc}")
     finally:
         session.remove_client(websocket)
+        if not session.clients:
+            logger.info(f"Last client disconnected from {session.match_id} — stopping session")
+            session.stop()
+            _sessions.pop(session.match_id, None)
