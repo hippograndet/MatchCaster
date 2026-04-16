@@ -9,6 +9,7 @@ export interface PossessionSegment {
   from: [number, number]
   to: [number, number]
   team: string
+  player: string          // last name shown at the start of each segment
   type: 'carry' | 'pass' | 'cross' | 'dribble' | 'shot'
   gameTimeSec: number
   arrivalWallMs: number
@@ -38,6 +39,10 @@ interface PitchCanvasProps {
   heatmapGranularity?: number
   shots: ShotData[]
   buildUpVectors: Record<string, Record<string, BuildUpZone>>
+  homeColorPrimary?: string
+  homeColorSecondary?: string
+  awayColorPrimary?: string
+  awayColorSecondary?: string
   className?: string
 }
 
@@ -329,12 +334,12 @@ function drawPossessionTrail(
         alphaModifier = 0.65    // dotted, slightly muted — player running
         break
       case 'cross':
-        strokeRgb = '167,139,250'  // violet — aerial ball
+        strokeRgb = teamRgb     // team color, long dashes = aerial ball
         lineWidth = 2.0
-        lineDash = []
+        lineDash = [6, 4]
         break
       case 'dribble':
-        strokeRgb = '250,204,21'   // gold — individual skill
+        strokeRgb = teamRgb     // team color, tight dots = individual skill
         lineWidth = 2.0
         lineDash = [2, 3]
         break
@@ -382,6 +387,22 @@ function drawPossessionTrail(
       ctx.closePath()
       ctx.fill()
     }
+
+    // Player last name at the 'from' point — shown when segment is recent enough
+    if (segOpacity > 0.35 && seg.player) {
+      const lastName = seg.player.trim().split(/\s+/).pop() ?? seg.player
+      ctx.shadowBlur = 0
+      ctx.font = 'bold 8px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'bottom'
+      const textW = ctx.measureText(lastName).width
+      ctx.globalAlpha = segOpacity * 0.9
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'
+      ctx.fillRect(x1 - textW / 2 - 2, y1 - 12, textW + 4, 10)
+      ctx.fillStyle = `rgb(${strokeRgb})`
+      ctx.fillText(lastName, x1, y1 - 2)
+    }
+
     ctx.restore()
   }
 
@@ -502,24 +523,37 @@ function drawFormation(
   lineup: LineupPlayer[],
   width: number,
   height: number,
-  padding: number
+  padding: number,
+  homePrimary: string,
+  homeSecondary: string,
+  awayPrimary: string,
+  awaySecondary: string,
 ) {
   for (const player of lineup) {
     const [sbX, sbY] = getFormationCoords(player.position, player.team)
     const { x, y } = sbToCanvas(sbX, sbY, width, height, padding)
-    const color = player.team === 'home' ? HOME_COLOR : AWAY_COLOR
+    const primary   = player.team === 'home' ? homePrimary   : awayPrimary
+    const secondary = player.team === 'home' ? homeSecondary : awaySecondary
     const r = 13
 
-    // Glow ring
+    // Outer glow + secondary-color ring
     ctx.save()
-    ctx.shadowColor = color
-    ctx.shadowBlur = 8
+    ctx.shadowColor = primary
+    ctx.shadowBlur = 10
+    ctx.beginPath()
+    ctx.arc(x, y, r + 3, 0, Math.PI * 2)
+    ctx.strokeStyle = secondary
+    ctx.lineWidth = 2.5
+    ctx.stroke()
+    ctx.shadowBlur = 0
+
+    // Primary-color fill circle
     ctx.beginPath()
     ctx.arc(x, y, r, 0, Math.PI * 2)
-    ctx.fillStyle = color + 'cc'
+    ctx.fillStyle = primary + 'dd'
     ctx.fill()
-    ctx.strokeStyle = 'rgba(255,255,255,0.75)'
-    ctx.lineWidth = 1.5
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+    ctx.lineWidth = 1
     ctx.stroke()
     ctx.restore()
 
@@ -642,6 +676,10 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({
   heatmapGranularity = 4,
   shots,
   buildUpVectors,
+  homeColorPrimary   = HOME_COLOR,
+  homeColorSecondary = '#16a34a',
+  awayColorPrimary   = AWAY_COLOR,
+  awayColorSecondary = '#1d4ed8',
   className = '',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -660,6 +698,10 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({
   const granularityRef = useRef(heatmapGranularity)
   const shotsRef = useRef(shots)
   const vectorsRef = useRef(buildUpVectors)
+  const homePrimaryRef   = useRef(homeColorPrimary)
+  const homeSecondaryRef = useRef(homeColorSecondary)
+  const awayPrimaryRef   = useRef(awayColorPrimary)
+  const awaySecondaryRef = useRef(awayColorSecondary)
 
   markersRef.current = markers
   trailRef.current = possessionTrail
@@ -675,6 +717,10 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({
   granularityRef.current = heatmapGranularity
   shotsRef.current = shots
   vectorsRef.current = buildUpVectors
+  homePrimaryRef.current   = homeColorPrimary
+  homeSecondaryRef.current = homeColorSecondary
+  awayPrimaryRef.current   = awayColorPrimary
+  awaySecondaryRef.current = awayColorSecondary
 
   const render = useCallback(() => {
     const canvas = canvasRef.current
@@ -699,7 +745,9 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({
       drawShotMap(ctx, shotsRef.current, homeTeamRef.current, width, height, PADDING)
     }
     if (ov.formation) {
-      drawFormation(ctx, lineupRef.current, width, height, PADDING)
+      drawFormation(ctx, lineupRef.current, width, height, PADDING,
+        homePrimaryRef.current, homeSecondaryRef.current,
+        awayPrimaryRef.current, awaySecondaryRef.current)
     }
     if (ov.live) {
       drawPossessionTrail(ctx, trailRef.current, isActiveRef.current, matchSpeedRef.current, homeTeamRef.current, width, height, PADDING)

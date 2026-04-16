@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -55,7 +55,7 @@ class BaseAgent(ABC):
         events: list[MatchEvent],
         state: SharedMatchState,
         analysis_context: str = "",
-        trace=None,
+        trace: Any = None,
     ) -> str:
         """
         Call Ollama /api/generate, stream tokens, enforce MAX_OUTPUT_TOKENS.
@@ -104,7 +104,7 @@ class BaseAgent(ABC):
             trace.llm_used_fallback = True
         return self._fallback(events, state)
 
-    async def _call_ollama(self, prompt: str, system_prompt: str = None, trace=None) -> str:
+    async def _call_ollama(self, prompt: str, system_prompt: Optional[str] = None, trace: Any = None) -> str:
         """Stream /api/generate and collect output up to MAX_OUTPUT_TOKENS."""
         import json
         import time as _time
@@ -195,12 +195,25 @@ class BaseAgent(ABC):
         return f"{ev.event_type} — {ev.player} for {ev.team}."
 
 
+# Normalize raw StatsBomb event type names before they reach the LLM
+_EVENT_TYPE_DISPLAY: dict[str, str] = {
+    "Ball Receipt*":     "receives ball",
+    "Ball Recovery":     "recovers ball",
+    "50/50":             "50/50 contest",
+    "Referee Ball-Drop": "referee ball drop",
+    "Half Start":        "half start",
+    "Half End":          "half end",
+    "Starting XI":       "starting lineup",
+}
+
+
 def _events_to_text(events: list[MatchEvent]) -> str:
     """Convert a list of events to a human-readable string for prompts."""
     lines = []
     for ev in events:
         loc = coords_to_description(*ev.position)
-        line = f"[{ev.event_type}] {ev.player} ({ev.team}) — {loc}"
+        display_type = _EVENT_TYPE_DISPLAY.get(ev.event_type, ev.event_type)
+        line = f"[{display_type}] {ev.player} ({ev.team}) — {loc}"
         if ev.end_position:
             end_loc = coords_to_description(*ev.end_position)
             line += f" → {end_loc}"

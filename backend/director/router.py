@@ -32,6 +32,7 @@ from config import (
 )
 from debug.trace import PipelineTrace
 from analyser.classifier import classify_and_tag, SequenceDetector, CRITICAL, NOTABLE, ROUTINE
+from analyser.engine import AnalysisSnapshot
 from analyser.state import SharedMatchState, AgentUtterance
 from player.loader import MatchEvent
 from commentator.agents.play_by_play import PlayByPlayAgent
@@ -79,6 +80,7 @@ class Director:
         self._next_batch_game_time: float = 0.0
         self._opening_done: bool = False    # first batch scene-setter fired
         self._batch_scheduler_task: Optional[asyncio.Task] = None
+        self._current_batch_task: Optional[asyncio.Task] = None   # in-flight generation task
 
         # Analyst scheduler state
         self._analyst_scheduler_task: Optional[asyncio.Task] = None
@@ -108,6 +110,8 @@ class Director:
         logger.info("Director started (paused=True, waiting for play)")
 
     def stop(self) -> None:
+        self.is_paused = True   # makes any in-flight _generate_pbp_batch / _fire_analyst exit early
+        self._match_ended = True  # prevents post-goal/analyst tasks from continuing
         for t in (self._batch_scheduler_task, self._analyst_scheduler_task):
             if t:
                 t.cancel()
@@ -122,7 +126,7 @@ class Director:
             window = self._compute_window(self._base_speed)
             window_end = current_time + window
             self._next_batch_game_time = window_end  # prevent scheduler double-firing
-            asyncio.get_event_loop().create_task(
+            self._current_batch_task = asyncio.get_event_loop().create_task(
                 self._generate_pbp_batch(current_time, window_end)
             )
 
@@ -140,7 +144,7 @@ class Director:
         self._all_events = events
         logger.info(f"Director loaded {len(events)} events (pre-classified)")
 
-    def set_analysis_snapshot(self, snapshot) -> None:
+    def set_analysis_snapshot(self, snapshot: AnalysisSnapshot) -> None:
         """Called each tick by MatchSession."""
         parts = []
         if self._match_context:
@@ -164,11 +168,15 @@ class Director:
         self._analyst_ctx_snapshot = "\n".join(a_parts)
 
     def on_seek(self, target_time: float) -> None:
-        """Called by MatchSession on seek — reset batch pointer and clear pre-generated queue."""
+        """Called by MatchSession on seek — cancel in-flight batch, clear queue, update pointer."""
+        # Best-effort cancel of any in-flight Ollama batch request
+        if self._current_batch_task and not self._current_batch_task.done():
+            self._current_batch_task.cancel()
+            self._current_batch_task = None
         self.event_tagged_queue.clear()
         self._next_batch_game_time = target_time
         self._opening_done = True   # don't re-fire the opening scene-setter after a seek
-        logger.info(f"Director seek reset to {target_time:.0f}s")
+        logger.info(f"Director seek updated to {target_time:.0f}s")
 
     # ------------------------------------------------------------------
     # Event processing (state updates + trigger detection)
@@ -263,7 +271,7 @@ class Director:
                 window_end = current_time + window
                 self._next_batch_game_time = window_end
 
-                asyncio.get_event_loop().create_task(
+                self._current_batch_task = asyncio.get_event_loop().create_task(
                     self._generate_pbp_batch(current_time, window_end)
                 )
 

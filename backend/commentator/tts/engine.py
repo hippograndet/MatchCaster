@@ -16,14 +16,20 @@ import os
 import struct
 import subprocess
 import tempfile
+import threading
+import warnings
 import wave
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Coroutine, Optional
 
 from config import MAX_AUDIO_DURATION_SEC
 from commentator.tts.voices import MACOS_SAY_VOICES
 
 logger = logging.getLogger("[TTS]")
+
+# Suppress phonemizer's word-count mismatch warnings — they're cosmetic
+warnings.filterwarnings("ignore", message="words count mismatch", module="phonemizer")
+warnings.filterwarnings("ignore", message="words count mismatch")
 
 # ---------------------------------------------------------------------------
 # Kokoro model paths
@@ -63,7 +69,7 @@ def _kokoro_available() -> bool:
         return False
 
 
-def _samples_to_wav(samples, sample_rate: int) -> bytes:
+def _samples_to_wav(samples: Any, sample_rate: int) -> bytes:
     """Convert float32 numpy samples to 16-bit WAV bytes."""
     import numpy as np
     pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
@@ -81,15 +87,18 @@ class _KokoroEngine:
 
     def __init__(self) -> None:
         self._kokoro = None
+        self._lock = threading.Lock()  # guards concurrent model loads from thread pool
 
-    def _load(self):
+    def _load(self) -> Any:
         if self._kokoro is None:
-            from kokoro_onnx import Kokoro
-            self._kokoro = Kokoro(
-                model_path=str(KOKORO_MODEL),
-                voices_path=str(KOKORO_VOICES),
-            )
-            logger.info("Kokoro model loaded")
+            with self._lock:
+                if self._kokoro is None:   # double-checked under lock
+                    from kokoro_onnx import Kokoro
+                    self._kokoro = Kokoro(
+                        model_path=str(KOKORO_MODEL),
+                        voices_path=str(KOKORO_VOICES),
+                    )
+                    logger.info("Kokoro model loaded")
         return self._kokoro
 
     def synthesize(self, text: str, agent_name: str) -> Optional[bytes]:
@@ -247,7 +256,7 @@ class PiperTTSEngine:
             return "say"
         return "none"
 
-    def synthesize_sync(self, text: str, agent_name: str, trace=None) -> Optional[bytes]:
+    def synthesize_sync(self, text: str, agent_name: str, trace: Any = None) -> Optional[bytes]:
         """Synthesize text → WAV bytes. Call from a thread-pool executor."""
         import time as _t
         if not text.strip():
@@ -281,7 +290,7 @@ class PiperTTSEngine:
 
         return wav
 
-    async def synthesize(self, text: str, agent_name: str, trace=None) -> Optional[bytes]:
+    async def synthesize(self, text: str, agent_name: str, trace: Any = None) -> Optional[bytes]:
         """Async wrapper — runs synthesis in a thread-pool executor."""
         loop = asyncio.get_event_loop()
         try:
@@ -290,6 +299,21 @@ class PiperTTSEngine:
         except Exception as exc:
             logger.error(f"TTS async error: {exc}")
             return None
+
+    async def warmup(self, broadcast_cb: Callable[..., Coroutine]) -> None:
+        """Eagerly load the TTS model in the background, then signal clients.
+
+        Broadcasts {"type": "tts_ready"} once the model is loaded (or immediately
+        if TTS is unavailable / uses the say backend with no load time).
+        """
+        if self._kokoro_ok:
+            loop = asyncio.get_event_loop()
+            try:
+                await loop.run_in_executor(None, lambda: _get_kokoro()._load())
+            except Exception as exc:
+                logger.warning(f"TTS warmup failed: {exc}")
+        # Broadcast readiness regardless (say backend or no backend both count as ready)
+        await broadcast_cb({"type": "tts_ready"})
 
 
 # Module-level singleton

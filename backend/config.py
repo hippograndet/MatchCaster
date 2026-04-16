@@ -16,7 +16,7 @@ OLLAMA_MODEL: str = "mistral:7b-instruct-q4_K_M"
 OLLAMA_TIMEOUT_SEC: float = 45.0            # Covers cold model load (~6s) + generation
 MAX_OUTPUT_TOKENS: int = 50                 # Keep commentary lines SHORT (~35 words max)
 
-AGENT_TEMPERATURES: dict = {
+AGENT_TEMPERATURES: dict[str, float] = {
     "play_by_play": 0.8,  # Creative, energetic
     "tactical": 0.5,       # Measured
     "stats": 0.4,          # Factual
@@ -25,7 +25,7 @@ AGENT_TEMPERATURES: dict = {
 # ---------------------------------------------------------------------------
 # TTS
 # ---------------------------------------------------------------------------
-PIPER_VOICES: dict = {
+PIPER_VOICES: dict[str, str] = {
     "play_by_play": "en_US-lessac-medium",   # Energetic American male — PBP
     "analyst":      "en_GB-alan-medium",      # Measured British analyst
     # Legacy aliases
@@ -37,7 +37,7 @@ MAX_AUDIO_DURATION_SEC: float = 6.0          # Truncate TTS output longer than t
 # ---------------------------------------------------------------------------
 # Director priority weights
 # ---------------------------------------------------------------------------
-PRIORITY_WEIGHTS: dict = {
+PRIORITY_WEIGHTS: dict[str, int] = {
     "goal":         100,
     "shot":          80,
     "red_card":      90,

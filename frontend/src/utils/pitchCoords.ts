@@ -70,10 +70,11 @@ export function drawPitch(
   ctx.lineTo(p + W / 2, p + H)
   ctx.stroke()
 
-  // Centre circle (r = 10 SB units)
-  const circleR = 10 * Math.min(scaleX, scaleY)
+  // Centre circle (r = 10 SB units) — drawn as an ellipse to match pitch scale
+  const circleRX = 10 * scaleX
+  const circleRY = 10 * scaleY
   ctx.beginPath()
-  ctx.arc(p + W / 2, p + H / 2, circleR, 0, Math.PI * 2)
+  ctx.ellipse(p + W / 2, p + H / 2, circleRX, circleRY, 0, 0, Math.PI * 2)
   ctx.stroke()
 
   // Centre spot
@@ -129,17 +130,23 @@ export function drawPitch(
   }
 
   // ── Penalty D arcs (arc outside penalty area) ──
-  // distance from spot to penalty area edge = 6 SB units; arc radius = 10 SB units
+  // The arc is a circle of radius 10 SB units centred on the penalty spot.
+  // Because the canvas may not preserve the SB aspect ratio we draw an ellipse
+  // with separate x/y radii so the arc always intersects the box edge exactly.
+  // distance from spot to penalty area edge = 6 SB units → dAngle = acos(6/10)
   const dAngle = Math.acos(6 / 10)   // ≈ 0.9273 rad
+  const dRX = 10 * scaleX
+  const dRY = 10 * scaleY
   ctx.beginPath()
-  ctx.arc(leftSpot.x, leftSpot.y, circleR, -dAngle, dAngle)
+  ctx.ellipse(leftSpot.x, leftSpot.y, dRX, dRY, 0, -dAngle, dAngle)
   ctx.stroke()
   ctx.beginPath()
-  ctx.arc(rightSpot.x, rightSpot.y, circleR, Math.PI - dAngle, Math.PI + dAngle)
+  ctx.ellipse(rightSpot.x, rightSpot.y, dRX, dRY, 0, Math.PI - dAngle, Math.PI + dAngle)
   ctx.stroke()
 
-  // ── Corner arcs (r ≈ 1 yard = ~1 SB unit) ──
-  const cornerR = 1 * Math.min(scaleX, scaleY) * 3   // slightly larger for visibility
+  // ── Corner arcs (r = 1 SB unit, slightly enlarged for visibility) ──
+  const cornerRX = scaleX * 3
+  const cornerRY = scaleY * 3
   const corners: [number, number, number, number][] = [
     [p,     p,     0,             Math.PI / 2],
     [p + W, p,     Math.PI / 2,  Math.PI],
@@ -148,7 +155,7 @@ export function drawPitch(
   ]
   for (const [cx, cy, start, end] of corners) {
     ctx.beginPath()
-    ctx.arc(cx, cy, cornerR, start, end)
+    ctx.ellipse(cx, cy, cornerRX, cornerRY, 0, start, end)
     ctx.stroke()
   }
 

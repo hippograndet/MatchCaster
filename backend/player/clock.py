@@ -28,7 +28,7 @@ class MatchClock:
         self._speed: float = speed
         self._match_time: float = 0.0
         self._running: bool = False
-        self._paused: bool = False
+        self._paused: bool = True   # hasn't started yet — logically paused
         self._task: asyncio.Task | None = None
         self._tick_callbacks: list[TickCallback] = []
         self._last_real_time: float = 0.0

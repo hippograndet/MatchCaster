@@ -39,6 +39,7 @@ export interface UseWebSocketReturn {
   matchMeta: MatchMeta | null
   analysis: MatchAnalysis | null
   nicknameMap: Record<string, string>
+  ttsReady: boolean
   setOnAudioReceived: (cb: ((msg: AudioMessage) => void) | null) => void
   sendAction: (action: string, extra?: Record<string, unknown>) => void
   debugTraces: PipelineTrace[]
@@ -49,7 +50,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
   const audioCallbackRef = useRef<((msg: AudioMessage) => void) | null>(null)
-  const isFirstConnectRef = useRef(true)   // true = seek to 0 on next open
+  const [ttsReady, setTtsReady] = useState(false)
 
   const [connected, setConnected] = useState(false)
   const [matchState, setMatchState] = useState<MatchState | null>(null)
@@ -148,6 +149,10 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
         setRunning(false)
         break
 
+      case 'tts_ready':
+        setTtsReady(true)
+        break
+
       case 'ping':
         break
 
@@ -168,12 +173,6 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     ws.onopen = () => {
       if (!mountedRef.current) { ws.close(); return }
       setConnected(true)
-      // On fresh match selection, always start from the beginning
-      if (isFirstConnectRef.current) {
-        isFirstConnectRef.current = false
-        ws.send(JSON.stringify({ action: 'seek', match_id: matchId, target_time: 0 }))
-      }
-      ws.send(JSON.stringify({ action: 'play', match_id: matchId }))
     }
     ws.onmessage = (evt) => handleMessage(evt.data)
     ws.onclose = () => {
@@ -191,7 +190,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     setGoalEvents([])
     setMatchEnded(false)
     setCurrentPeriod(1)
-    isFirstConnectRef.current = true    // next open → seek to 0
+    setTtsReady(false)
     setAnalysis(null)
     setAgentCommentaries({ play_by_play: null, tactical: null, stats: null })
     if (matchId) connect()
@@ -225,6 +224,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     matchMeta,
     analysis,
     nicknameMap,
+    ttsReady,
     setOnAudioReceived,
     sendAction,
     debugTraces,

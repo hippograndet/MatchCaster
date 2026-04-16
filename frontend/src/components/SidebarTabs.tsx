@@ -1,8 +1,8 @@
 // frontend/src/components/SidebarTabs.tsx
-// Tabbed right sidebar: Stats | Live | Squad
+// Tabbed right sidebar: compact score header + Stats | Live | Squad
 
 import React, { useEffect, useRef, useState } from 'react'
-import type { MatchState, MatchEventData, MatchAnalysis, LineupPlayer } from '../utils/types'
+import type { MatchState, MatchEventData, MatchAnalysis, LineupPlayer, GoalEvent, MatchMeta } from '../utils/types'
 
 type Tab = 'stats' | 'live' | 'squad'
 
@@ -15,6 +15,14 @@ interface SidebarTabsProps {
   awayTeam: string
   homeColor: string
   awayColor: string
+  // Score panel props
+  score: { home: number; away: number }
+  matchTime: number
+  running: boolean
+  matchEnded: boolean
+  currentPeriod: number
+  goalEvents: GoalEvent[]
+  matchMeta: MatchMeta | null
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -25,6 +33,13 @@ function pct(val: number, total: number): number {
 
 function fmtMin(sec: number): string {
   return `${Math.floor(sec / 60)}'`
+}
+
+function fmtClock(sec: number, period: number): string {
+  const min = Math.floor(Math.max(0, sec) / 60)
+  const halfEnd: Record<number, number> = { 1: 45, 2: 90, 3: 105, 4: 120 }
+  const cap = halfEnd[period] ?? 90
+  return min <= cap ? `${min}'` : `${cap}+${min - cap}'`
 }
 
 /** Format as "F. Lastname" */
@@ -47,7 +62,7 @@ const isKeyEvent = (ev: MatchEventData): boolean => {
 function eventIcon(ev: MatchEventData): string {
   if (ev.event_type === 'Shot' && ev.details.shot_outcome === 'Goal') return '⚽'
   if (ev.details.foul_card === 'Yellow Card' || ev.details.card === 'Yellow Card') return '🟨'
-  if (ev.details.foul_card === 'Red Card' || ev.details.card === 'Red Card') return '🟥'
+  if (ev.details.foul_card === 'Red Card'    || ev.details.card === 'Red Card')    return '🟥'
   if (ev.event_type === 'Substitution') return '↕'
   if (ev.event_type === 'Shot') return '🎯'
   if (ev.event_type === 'Pass') return '→'
@@ -71,6 +86,139 @@ function formatDesc(ev: MatchEventData): string {
     return `${shortName(ev.player)} [${ev.details.foul_card ?? ev.details.card}]`
   }
   return shortName(ev.player) || ev.event_type
+}
+
+function formatDetail(ev: MatchEventData): string | null {
+  const parts: string[] = []
+  if (ev.event_type === 'Pass') {
+    if (ev.details.cross) parts.push('cross')
+    if (ev.details.pass_recipient) parts.push(`→ ${shortName(ev.details.pass_recipient)}`)
+    if (ev.details.pass_outcome && ev.details.pass_outcome !== 'Complete')
+      parts.push(`[${ev.details.pass_outcome}]`)
+    if (ev.details.goal_assist) parts.push('🅰 assist')
+  } else if (ev.event_type === 'Dribble') {
+    if (ev.details.dribble_outcome) parts.push(ev.details.dribble_outcome)
+  } else if (ev.event_type === 'Goal Keeper') {
+    if (ev.details.gk_type)    parts.push(ev.details.gk_type)
+    if (ev.details.gk_outcome) parts.push(ev.details.gk_outcome)
+  } else if (ev.event_type === 'Shot') {
+    if (ev.details.xg !== undefined && ev.details.xg > 0)
+      parts.push(`xG ${ev.details.xg.toFixed(2)}`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+// ── Score Panel ────────────────────────────────────────────────────────────
+
+function ScorePanel({
+  homeTeam, awayTeam, homeColor, awayColor,
+  score, matchTime, running, matchEnded, currentPeriod, goalEvents, matchMeta,
+}: Pick<SidebarTabsProps,
+  'homeTeam' | 'awayTeam' | 'homeColor' | 'awayColor' |
+  'score' | 'matchTime' | 'running' | 'matchEnded' | 'currentPeriod' | 'goalEvents' | 'matchMeta'
+>) {
+  const homeGoals = goalEvents.filter(g => g.team === homeTeam)
+  const awayGoals = goalEvents.filter(g => g.team === awayTeam)
+
+  const statusLabel = matchEnded
+    ? 'FT'
+    : matchTime === 0
+    ? 'Pre-match'
+    : fmtClock(matchTime, currentPeriod)
+
+  const metaParts: string[] = []
+  if (matchMeta?.competition) metaParts.push(matchMeta.competition)
+  if (matchMeta?.date)        metaParts.push(matchMeta.date)
+
+  const venueParts: string[] = []
+  if (matchMeta?.stadium) venueParts.push(matchMeta.stadium)
+  if (matchMeta?.city)    venueParts.push(matchMeta.city)
+  const venueStr = venueParts.join(', ')
+
+  return (
+    <div className="flex-shrink-0 border-b border-[#1e1e2e] px-3 pt-3 pb-2.5">
+      {/* Competition / venue — compact single line */}
+      {metaParts.length > 0 && (
+        <p className="font-mono text-[9px] text-gray-600 tracking-wide text-center mb-2 truncate">
+          {metaParts.join('  ·  ')}
+          {venueStr && <span className="opacity-60">  ·  {venueStr}</span>}
+        </p>
+      )}
+
+      {/* Score row */}
+      <div className="flex items-center justify-between gap-2">
+        {/* Home */}
+        <div className="flex-1 min-w-0 flex flex-col items-end gap-0.5">
+          <span
+            className="font-sans font-bold text-sm leading-tight text-right truncate w-full"
+            style={{ color: homeColor }}
+          >
+            {homeTeam}
+          </span>
+          <div className="flex flex-col items-end gap-px">
+            {homeGoals.map((g, i) => (
+              <span key={i} className="font-mono text-[9px] text-gray-500">
+                {shortName(g.player)} {g.minute}'
+                {g.is_own_goal && <span className="text-red-400 ml-0.5">og</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Score + clock */}
+        <div className="flex flex-col items-center flex-shrink-0 gap-1">
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono font-black text-3xl text-white tabular-nums leading-none">
+              {score.home}
+            </span>
+            <span className="font-mono text-gray-600 text-lg leading-none">–</span>
+            <span className="font-mono font-black text-3xl text-white tabular-nums leading-none">
+              {score.away}
+            </span>
+          </div>
+          <div
+            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold
+              ${matchEnded
+                ? 'bg-gray-800 text-gray-400'
+                : running
+                ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700/40'
+                : matchTime === 0
+                ? 'bg-[#1a1a2c] text-gray-500 border border-[#252535]'
+                : 'bg-[#1a1a2c] text-gray-300 border border-[#252535]'
+              }`}
+          >
+            {running && <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />}
+            {statusLabel}
+          </div>
+        </div>
+
+        {/* Away */}
+        <div className="flex-1 min-w-0 flex flex-col items-start gap-0.5">
+          <span
+            className="font-sans font-bold text-sm leading-tight truncate w-full"
+            style={{ color: awayColor }}
+          >
+            {awayTeam}
+          </span>
+          <div className="flex flex-col items-start gap-px">
+            {awayGoals.map((g, i) => (
+              <span key={i} className="font-mono text-[9px] text-gray-500">
+                {shortName(g.player)} {g.minute}'
+                {g.is_own_goal && <span className="text-red-400 ml-0.5">og</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Weather line */}
+      {matchMeta?.weather && (
+        <p className="font-mono text-[9px] text-gray-600 text-center mt-1.5 opacity-70">
+          {matchMeta.weather}
+        </p>
+      )}
+    </div>
+  )
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────
@@ -105,13 +253,11 @@ function StatsTab({
     { label: 'Red',          hv: h.red_cards,         av: a.red_cards },
   ]
 
-  // Momentum section
   const mom_h = analysis?.momentum_home ?? 50
   const mom_a = analysis?.momentum_away ?? 50
 
   return (
     <div className="flex flex-col gap-4 px-3 py-3 overflow-y-auto h-full">
-      {/* Momentum */}
       {analysis && (
         <div>
           <SectionLabel>Momentum</SectionLabel>
@@ -129,7 +275,6 @@ function StatsTab({
         </div>
       )}
 
-      {/* Possession */}
       <div>
         <SectionLabel>Possession</SectionLabel>
         <div className="flex justify-between font-mono text-xs mt-1.5 mb-1">
@@ -142,7 +287,6 @@ function StatsTab({
         </div>
       </div>
 
-      {/* Stat rows */}
       <div className="space-y-2.5">
         <SectionLabel>Match Stats</SectionLabel>
         {rows.map(row => {
@@ -193,7 +337,6 @@ function LiveTab({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toggle */}
       <div className="flex border-b border-[#1a1a28] flex-shrink-0">
         {[false, true].map(all => (
           <button
@@ -216,21 +359,24 @@ function LiveTab({
           return (
             <div
               key={ev.id || i}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs border-l-2 transition-colors
+              className={`flex items-start gap-2 px-3 py-1.5 text-xs border-l-2 transition-colors
                 ${isGoal ? 'bg-red-900/15 border-red-500' : 'border-transparent hover:bg-[#111120]'}`}
               style={!isGoal ? { borderColor: 'transparent' } : undefined}
             >
-              <span className="font-mono text-[10px] text-gray-600 flex-shrink-0 w-8">{fmtMin(ev.timestamp_sec)}</span>
-              <span className="flex-shrink-0 text-sm">{eventIcon(ev)}</span>
+              <span className="font-mono text-[10px] text-gray-600 flex-shrink-0 w-8 pt-px">{fmtMin(ev.timestamp_sec)}</span>
+              <span className="flex-shrink-0 text-sm pt-px">{eventIcon(ev)}</span>
               <div className="flex-1 min-w-0">
                 <p className={`truncate text-[11px] ${isGoal ? 'font-bold text-white' : 'text-gray-300'}`}>
                   {formatDesc(ev)}
                 </p>
                 {showAll && (
                   <p className="font-mono text-[9px] truncate" style={{ color: accentColor }}>
-                    {ev.team}
+                    {ev.event_type} · {ev.team}
                   </p>
                 )}
+                {showAll && (() => { const d = formatDetail(ev); return d ? (
+                  <p className="font-mono text-[9px] text-gray-600 truncate">{d}</p>
+                ) : null })()}
               </div>
             </div>
           )
@@ -311,6 +457,21 @@ export const SidebarTabs: React.FC<SidebarTabsProps> = (props) => {
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {/* Compact score header */}
+      <ScorePanel
+        homeTeam={props.homeTeam}
+        awayTeam={props.awayTeam}
+        homeColor={props.homeColor}
+        awayColor={props.awayColor}
+        score={props.score}
+        matchTime={props.matchTime}
+        running={props.running}
+        matchEnded={props.matchEnded}
+        currentPeriod={props.currentPeriod}
+        goalEvents={props.goalEvents}
+        matchMeta={props.matchMeta}
+      />
+
       {/* Tab header */}
       <div className="flex border-b border-[#1e1e2e] flex-shrink-0">
         {TABS.map(t => (

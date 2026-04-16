@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { PitchCanvas } from './components/PitchCanvas'
 import type { PossessionSegment, DangerEntry } from './components/PitchCanvas'
-import { MatchHeader } from './components/MatchHeader'
 import { SidebarTabs } from './components/SidebarTabs'
 import { VideoControls } from './components/VideoControls'
 import { OverlayPanel } from './components/OverlayPanel'
@@ -15,21 +14,18 @@ import type { AgentCommentary } from './hooks/useWebSocket'
 import { useAudioPlayer } from './hooks/useAudioPlayer'
 import type {
   PitchMarker, PitchOverlays, Personality, HeatmapTeam, LineupPlayer, MatchInfo,
-  ActivityBucket, GoalMarker,
+  ActivityBucket, GoalMarker, GoalEvent,
 } from './utils/types'
 
 const IS_DEV = new URLSearchParams(window.location.search).has('dev')
 
 const MARKER_MAX_AGE_MS = 10_000
 
-// Events that never affect possession state
 const POSSESSION_IGNORE = new Set([
   'Pressure', 'Block', 'Duel', 'Foul Won', '50/50',
   'Camera On', 'Camera off', 'Offside',
 ])
 
-// Determines which events create a visual segment on the trail.
-// Shot is included so the trajectory is drawn as the final segment before possession ends.
 function getSegmentType(
   eventType: string,
   details: { cross?: boolean } | undefined
@@ -41,8 +37,6 @@ function getSegmentType(
   return null
 }
 
-// Returns true when an event ends the current possession (even if same team).
-// Note: Shot is here AND in getSegmentType — the segment is created first, then possession ends.
 function endsPossession(eventType: string, details: {
   pass_outcome?: string
   dribble_outcome?: string
@@ -56,7 +50,7 @@ function endsPossession(eventType: string, details: {
   if (eventType === 'Dribble' && details?.dribble_outcome === 'Incomplete') return true
   if (eventType === 'Pass') {
     const o = details?.pass_outcome
-    if (o && o !== 'Complete') return true  // incomplete / wayward / intercepted pass
+    if (o && o !== 'Complete') return true
   }
   return false
 }
@@ -100,14 +94,92 @@ const POSITION_MAP: Record<string, [number, number]> = {
 const emptyGrid = () =>
   Array.from({ length: HEATMAP_ROWS }, () => new Array(HEATMAP_COLS).fill(0))
 
+// ── Color utilities ───────────────────────────────────────────────────────
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '').padEnd(6, '0')
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
+
+function colorsSimilar(c1: string, c2: string, threshold = 80): boolean {
+  try {
+    const [r1, g1, b1] = hexToRgb(c1)
+    const [r2, g2, b2] = hexToRgb(c2)
+    return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2) < threshold
+  } catch { return false }
+}
+
+// ── Goal flash overlay ────────────────────────────────────────────────────
+
+interface GoalFlash { color: string; scorer: string; team: string; key: number }
+
+function GoalFlashOverlay({ flash }: { flash: GoalFlash }) {
+  const rings = [0, 0.35, 0.7]
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 40 }}>
+      {/* Color wash */}
+      <div
+        className="goal-anim-bg absolute inset-0"
+        style={{
+          background: `radial-gradient(ellipse at center, ${flash.color}cc 0%, ${flash.color}55 60%, transparent 100%)`,
+        }}
+      />
+      {/* Expanding rings */}
+      {rings.map((delay, i) => (
+        <div key={i} className="absolute inset-0 flex items-center justify-center">
+          <div
+            className="goal-anim-ring"
+            style={{ animationDelay: `${delay}s`, borderColor: flash.color }}
+          />
+        </div>
+      ))}
+      {/* Text block */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 select-none">
+        <div
+          className="goal-anim-title font-black tracking-tight"
+          style={{
+            fontSize: 'clamp(52px, 9vw, 100px)',
+            color: '#ffffff',
+            textShadow: `0 0 40px ${flash.color}, 0 0 80px ${flash.color}88, 0 4px 20px rgba(0,0,0,0.8)`,
+            lineHeight: 1,
+          }}
+        >
+          ⚽ GOAL!
+        </div>
+        <div
+          className="goal-anim-sub font-bold"
+          style={{
+            fontSize: 'clamp(14px, 2.5vw, 26px)',
+            color: '#ffffff',
+            textShadow: '0 2px 12px rgba(0,0,0,0.9)',
+          }}
+        >
+          {flash.scorer}
+        </div>
+        <div
+          className="goal-anim-sub2 font-mono uppercase tracking-widest"
+          style={{
+            fontSize: 'clamp(9px, 1.4vw, 14px)',
+            color: flash.color,
+            textShadow: `0 0 12px ${flash.color}`,
+          }}
+        >
+          {flash.team}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   // ── UI state ──────────────────────────────────────────────────────────
   const [showModal,   setShowModal]   = useState(true)
   const [showOverlay, setShowOverlay] = useState(false)
+  const [darkMode,    setDarkMode]    = useState(true)
 
   // ── Match selection ───────────────────────────────────────────────────
   const [selectedMatch, setSelectedMatch] = useState<string | null>(null)
-  const [totalTime,     setTotalTime]     = useState(5400)   // seconds
+  const [totalTime,     setTotalTime]     = useState(5400)
 
   // ── Pitch state ───────────────────────────────────────────────────────
   const [overlays, setOverlays] = useState<PitchOverlays>({
@@ -121,7 +193,6 @@ export default function App() {
   const [lastPossession,    setLastPossession]    = useState<PossessionSegment[] | null>(null)
   const [dangerEntries,     setDangerEntries]     = useState<DangerEntry[]>([])
 
-  // Possession tracking — mutable refs so we can update mid-effect without stale closures
   const possessionSegmentsRef  = useRef<PossessionSegment[]>([])
   const possessionTeamRef      = useRef<string | null>(null)
   const possessionIdRef        = useRef<number>(0)
@@ -131,6 +202,11 @@ export default function App() {
   const [activityBuckets,   setActivityBuckets]   = useState<ActivityBucket[]>([])
   const [goalMarkers,       setGoalMarkers]       = useState<GoalMarker[]>([])
   const [summaryLoading,    setSummaryLoading]    = useState(false)
+
+  // ── Goal flash ────────────────────────────────────────────────────────
+  const [goalFlash,      setGoalFlash]      = useState<GoalFlash | null>(null)
+  const prevGoalCountRef = useRef(0)
+  const goalFlashKeyRef  = useRef(0)
 
   // ── WebSocket ─────────────────────────────────────────────────────────
   const {
@@ -149,12 +225,40 @@ export default function App() {
     return () => setOnPlaybackStarted(null)
   }, [setOnPlaybackStarted])
 
-  // ── Derived colors ────────────────────────────────────────────────────
-  const homeColor = matchMeta?.home_colors?.primary ?? '#22c55e'
-  const awayColor = matchMeta?.away_colors?.primary ?? '#3b82f6'
+  // ── Derived colors (with clash detection) ────────────────────────────
+  const homeColorPrimary   = matchMeta?.home_colors?.primary   ?? '#22c55e'
+  const homeColorSecondary = matchMeta?.home_colors?.secondary ?? '#16a34a'
+  const awayColorPrimary   = matchMeta?.away_colors?.primary   ?? '#3b82f6'
+  const awayColorSecondary = matchMeta?.away_colors?.secondary ?? '#1d4ed8'
+
+  // If primary colors are too similar, the away team shows their secondary color instead
+  const effectiveAwayColor = colorsSimilar(homeColorPrimary, awayColorPrimary)
+    ? awayColorSecondary
+    : awayColorPrimary
+
+  const homeColor = homeColorPrimary
+  const awayColor = effectiveAwayColor
   const homeTeam  = matchState?.home_team ?? 'Home'
   const awayTeam  = matchState?.away_team ?? 'Away'
   const score     = matchState?.score ?? { home: 0, away: 0 }
+
+  // ── Detect new goals → trigger flash ─────────────────────────────────
+  useEffect(() => {
+    if (goalEvents.length > prevGoalCountRef.current) {
+      const latest = goalEvents[goalEvents.length - 1] as GoalEvent
+      const teamColor = latest.team === homeTeam ? homeColor : awayColor
+      goalFlashKeyRef.current += 1
+      setGoalFlash({ color: teamColor, scorer: latest.player, team: latest.team, key: goalFlashKeyRef.current })
+    }
+    prevGoalCountRef.current = goalEvents.length
+  }, [goalEvents.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-clear goal flash after animation
+  useEffect(() => {
+    if (!goalFlash) return
+    const t = setTimeout(() => setGoalFlash(null), 3600)
+    return () => clearTimeout(t)
+  }, [goalFlash])
 
   // ── Event → pitch markers + heatmap ──────────────────────────────────
   useEffect(() => {
@@ -180,13 +284,11 @@ export default function App() {
       return [...filtered, marker]
     })
 
-    // ── Possession trail ─────────────────────────────────────────────────
     if (!POSSESSION_IGNORE.has(latest.event_type)) {
       const segType = getSegmentType(latest.event_type, latest.details)
       const teamChanged = possessionTeamRef.current !== null && latest.team !== possessionTeamRef.current
 
       if (teamChanged) {
-        // Ball changed hands — archive current possession as fallback
         if (possessionSegmentsRef.current.length > 0) {
           setLastPossession([...possessionSegmentsRef.current])
         }
@@ -196,21 +298,17 @@ export default function App() {
       }
 
       if (segType && latest.end_position) {
-        // Finalize the duration of the previous segment now that we know when the next event arrived
         const segs = possessionSegmentsRef.current
         if (segs.length > 0) {
           const prev = segs[segs.length - 1]
           prev.durationMs = Math.max(150, now - prev.arrivalWallMs)
         }
 
-        // Open a new possession if none is active
         if (!possessionTeamRef.current) {
           possessionIdRef.current += 1
           possessionTeamRef.current = latest.team
         }
 
-        // Estimate duration for this segment — will be overwritten when next event arrives.
-        // Carries/dribbles are slow; passes snap across the pitch.
         const [fx, fy] = latest.position
         const [tx, ty] = latest.end_position
         const dist = Math.sqrt((tx - fx) ** 2 + (ty - fy) ** 2)
@@ -222,6 +320,7 @@ export default function App() {
           from: latest.position,
           to:   latest.end_position,
           team: latest.team,
+          player: latest.player,
           type: segType,
           gameTimeSec:   latest.timestamp_sec,
           arrivalWallMs: now,
@@ -234,7 +333,6 @@ export default function App() {
         setActivePossession([...possessionSegmentsRef.current])
       }
 
-      // End possession after recording the final segment (shot, clearance, bad pass, etc.)
       if (
         possessionTeamRef.current &&
         latest.team === possessionTeamRef.current &&
@@ -260,7 +358,6 @@ export default function App() {
 
     const [x, y] = latest.position
     const col = Math.min(HEATMAP_COLS - 1, Math.floor((x / 120) * HEATMAP_COLS))
-    // Flip Y to match sbToCanvas convention (SB y=0 → canvas bottom, y=80 → canvas top)
     const row = Math.min(HEATMAP_ROWS - 1, Math.floor(((80 - y) / 80) * HEATMAP_ROWS))
     const isHome = matchState && latest.team === matchState.home_team
     const setter = isHome ? setHeatmapHome : setHeatmapAway
@@ -328,7 +425,6 @@ export default function App() {
   const handlePause       = useCallback(() => sendAction('pause'), [sendAction])
   const handleSeek        = useCallback((t: number) => {
     sendAction('seek', { target_time: t })
-    // Clear all stale visual state so nothing from the old position lingers
     setActivePossession(null)
     setLastPossession(null)
     possessionSegmentsRef.current = []
@@ -350,7 +446,6 @@ export default function App() {
 
   const handleStart = useCallback((matchId: string, pers: Personality) => {
     setShowModal(false)
-    // Reset all pitch state
     setMarkers([]); setActivePossession(null); setLastPossession([]); setDangerEntries([]); setLineup([])
     possessionSegmentsRef.current = []; possessionTeamRef.current = null; possessionIdRef.current = 0
     setHeatmapHome(emptyGrid()); setHeatmapAway(emptyGrid())
@@ -358,7 +453,7 @@ export default function App() {
     setOverlays({ live: true, formation: false, heatmap: false, shotmap: false, vectors: false })
     setPersonality(pers)
     setSelectedMatch(matchId)
-    // Fetch total time for seek bar
+    prevGoalCountRef.current = 0
     fetch('/api/matches')
       .then(r => r.json())
       .then((ms: MatchInfo[]) => {
@@ -366,7 +461,6 @@ export default function App() {
         if (m) setTotalTime(m.total_time ?? 5400)
       })
       .catch(() => {})
-    // Fetch match summary for waveform
     setSummaryLoading(true)
     fetch(`/api/match_summary/${matchId}`)
       .then(r => r.json())
@@ -379,13 +473,19 @@ export default function App() {
   }, [])
 
   return (
-    <div className="flex flex-col h-screen bg-[#0a0a12] text-gray-100 overflow-hidden">
+    <div
+      className="flex flex-col h-screen text-gray-100 overflow-hidden"
+      style={{ background: 'var(--bg-deep)' }}
+      data-theme={darkMode ? 'dark' : 'light'}
+    >
 
-      {/* ── Launch modal ─────────────────────────────────────────── */}
       {showModal && <MatchSelectModal onStart={handleStart} />}
 
       {/* ── Top bar ──────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[#1e1e2e] bg-[#080810] flex-shrink-0">
+      <div
+        className="flex items-center justify-between px-4 py-2 border-b border-[#1e1e2e] flex-shrink-0"
+        style={{ background: 'var(--bg-panel)' }}
+      >
         <button
           onClick={() => setShowModal(true)}
           className="font-mono font-extrabold text-sm tracking-widest hover:opacity-80 transition-opacity"
@@ -407,79 +507,97 @@ export default function App() {
             <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'}`} />
             <span className="font-mono text-[10px] text-gray-600">{connected ? 'Connected' : 'Offline'}</span>
           </div>
+          {/* Theme toggle */}
+          <button
+            onClick={() => setDarkMode(d => !d)}
+            title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            className="font-mono text-[13px] text-gray-500 hover:text-gray-300 transition-colors
+              px-2.5 py-1 rounded-lg border border-[#1e1e2e] hover:border-[#2e2e45]"
+          >
+            {darkMode ? '☀' : '☾'}
+          </button>
+          <button
+            onClick={() => window.close()}
+            title="Quit MatchCaster"
+            className="font-mono text-[11px] text-gray-600 hover:text-red-400 transition-colors
+              px-3 py-1 rounded-lg border border-[#1e1e2e] hover:border-red-500/40"
+          >
+            Quit
+          </button>
         </div>
       </div>
-
-      {/* ── Match header ─────────────────────────────────────────── */}
-      <MatchHeader
-        homeTeam={homeTeam}
-        awayTeam={awayTeam}
-        score={score}
-        matchTime={matchTime}
-        running={running}
-        matchEnded={matchEnded}
-        goalEvents={goalEvents}
-        matchMeta={matchMeta}
-        homeColor={homeColor}
-        awayColor={awayColor}
-      />
 
       {/* ── Main area ─────────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
-        {/* Pitch */}
-        <div className="flex-1 min-w-0 relative bg-[#07070e]">
-          {!selectedMatch ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-8">
-              <div className="text-6xl opacity-20">⚽</div>
-              <p className="font-mono text-gray-600 text-sm">
-                Click <span className="text-amber-400">MATCHCASTER</span> above to pick a match
-              </p>
-            </div>
-          ) : (
-            <>
-              <PitchCanvas
-                markers={markers}
-                possessionTrail={activePossession ?? lastPossession ?? []}
-                isActivePossession={activePossession !== null}
-                matchSpeed={speed}
-                dangerEntries={dangerEntries}
-                homeTeam={homeTeam}
-                awayTeam={awayTeam}
-                overlays={overlays}
-                lineup={lineup}
-                heatmapData={heatmapTeam === 'home' ? heatmapHome : heatmapAway}
-                heatmapTeam={heatmapTeam}
-                heatmapGranularity={heatmapGranularity}
-                shots={analysis?.shots ?? []}
-                buildUpVectors={analysis?.build_up_vectors ?? {}}
-              />
-              <CommentaryOverlay
-                latestCommentary={latestCommentary}
-                activeAgent={activeAgent}
-                isPlaying={isPlaying}
-              />
-              {/* Overlay panel — floats top-right of pitch */}
-              <OverlayPanel
-                isOpen={showOverlay}
-                overlays={overlays}
-                heatmapTeam={heatmapTeam}
-                heatmapGranularity={heatmapGranularity}
-                personality={personality}
-                homeTeam={homeTeam}
-                awayTeam={awayTeam}
-                onClose={() => setShowOverlay(false)}
-                onToggleOverlay={toggleOverlay}
-                onHeatmapTeamChange={setHeatmapTeam}
-                onHeatmapGranularityChange={setHeatmapGranularity}
-                onPersonalityChange={handlePersonalityChange}
-              />
-            </>
-          )}
+        {/* Pitch — full height, 3:2 aspect ratio centred */}
+        <div
+          className="flex-1 min-w-0 flex items-center justify-center overflow-hidden"
+          style={{ background: 'var(--bg-main)' }}
+        >
+          <div
+            className="relative h-full"
+            style={{ aspectRatio: '3/2', maxWidth: '100%' }}
+          >
+            {!selectedMatch ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-8">
+                <div className="text-6xl opacity-20">⚽</div>
+                <p className="font-mono text-gray-600 text-sm">
+                  Click <span className="text-amber-400">MATCHCASTER</span> above to pick a match
+                </p>
+              </div>
+            ) : (
+              <>
+                <PitchCanvas
+                  markers={markers}
+                  possessionTrail={activePossession ?? lastPossession ?? []}
+                  isActivePossession={activePossession !== null}
+                  matchSpeed={speed}
+                  dangerEntries={dangerEntries}
+                  homeTeam={homeTeam}
+                  awayTeam={awayTeam}
+                  overlays={overlays}
+                  lineup={lineup}
+                  heatmapData={heatmapTeam === 'home' ? heatmapHome : heatmapAway}
+                  heatmapTeam={heatmapTeam}
+                  heatmapGranularity={heatmapGranularity}
+                  shots={analysis?.shots ?? []}
+                  buildUpVectors={analysis?.build_up_vectors ?? {}}
+                  homeColorPrimary={homeColor}
+                  homeColorSecondary={homeColorSecondary}
+                  awayColorPrimary={awayColor}
+                  awayColorSecondary={awayColorSecondary}
+                />
+                {goalFlash && <GoalFlashOverlay key={goalFlash.key} flash={goalFlash} />}
+                <CommentaryOverlay
+                  latestCommentary={latestCommentary}
+                  activeAgent={activeAgent}
+                  isPlaying={isPlaying}
+                />
+                <OverlayPanel
+                  isOpen={showOverlay}
+                  overlays={overlays}
+                  heatmapTeam={heatmapTeam}
+                  heatmapGranularity={heatmapGranularity}
+                  personality={personality}
+                  homeTeam={homeTeam}
+                  awayTeam={awayTeam}
+                  onClose={() => setShowOverlay(false)}
+                  onToggleOverlay={toggleOverlay}
+                  onHeatmapTeamChange={setHeatmapTeam}
+                  onHeatmapGranularityChange={setHeatmapGranularity}
+                  onPersonalityChange={handlePersonalityChange}
+                />
+              </>
+            )}
+          </div>
         </div>
 
-        {/* Sidebar */}
-        <aside className="w-80 flex-shrink-0 border-l border-[#1e1e2e] bg-[#080810]">
+        {/* Sidebar — compact score header + stats/live/squad tabs */}
+        <aside
+          className="w-80 flex-shrink-0 border-l border-[#1e1e2e] flex flex-col"
+          style={{ background: 'var(--bg-panel)' }}
+        >
           <SidebarTabs
             matchState={matchState}
             recentEvents={recentEvents}
@@ -489,6 +607,13 @@ export default function App() {
             awayTeam={awayTeam}
             homeColor={homeColor}
             awayColor={awayColor}
+            score={score}
+            matchTime={matchTime}
+            running={running}
+            matchEnded={matchEnded}
+            currentPeriod={currentPeriod}
+            goalEvents={goalEvents}
+            matchMeta={matchMeta}
           />
         </aside>
       </div>
@@ -502,6 +627,7 @@ export default function App() {
         currentPeriod={currentPeriod}
         matchEnded={matchEnded}
         connected={connected}
+        ttsReady={true}
         muted={muted}
         homeColor={homeColor}
         awayColor={awayColor}
@@ -520,7 +646,6 @@ export default function App() {
         onChangeMatch={() => setShowModal(true)}
       />
 
-      {/* Dev inspector — only rendered when ?dev=true */}
       {IS_DEV && (
         <DevPanel
           traces={debugTraces}

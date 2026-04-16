@@ -200,6 +200,11 @@ class MatchSession:
 
         logger.info(f"Enrichment loaded: {full_meta.competition} | {full_meta.stadium} | weather={weather.description if weather and weather.available else 'N/A'}")
 
+        # Warm up TTS model in background, broadcast tts_ready when done
+        asyncio.get_event_loop().create_task(
+            self.director._tts.warmup(self._broadcast)
+        )
+
     def _ensure_snapshots(self) -> None:
         """Compute (once) the 5-min stat snapshots for this match."""
         if self._snapshots:
@@ -321,23 +326,24 @@ class MatchSession:
             # Rewind 30 match-seconds (legacy — prefer 'seek' with target_time)
             current = self.replay_session.clock.get_time()
             target = max(0.0, current - 30.0)
-            was_paused = self.replay_session.clock._paused
-            self.replay_session.clock.pause()
+            if not self.replay_session.clock._paused:
+                self.replay_session.clock.pause()
             self.replay_session.seek(target)
-            self.director.set_paused(True)
+            if not self.director.is_paused:
+                self.director.set_paused(True)
             self.audio_queue.clear()
             self.director.on_seek(target)
-            if not was_paused:
-                self.replay_session.clock.resume()
-                self.director.set_paused(False)
+            # Always stay paused after seek — user must press Play
 
         elif action == "seek":
-            # Seek to absolute match time and restore stats/score to that point
+            # Seek to absolute match time and restore stats/score to that point.
+            # Always leaves the clock paused — user must press Play to resume.
             target = max(0.0, float(msg.get("target_time", 0)))
-            was_paused = self.replay_session.clock._paused
-            self.replay_session.clock.pause()
+            if not self.replay_session.clock._paused:
+                self.replay_session.clock.pause()
             self.replay_session.seek(target)
-            self.director.set_paused(True)
+            if not self.director.is_paused:
+                self.director.set_paused(True)
 
             # Flush stale audio and pre-generated commentary, reset batch pointer
             self.audio_queue.clear()
@@ -361,9 +367,6 @@ class MatchSession:
                 },
                 "match_id": self.match_id,
             })
-            if not was_paused:
-                self.replay_session.clock.resume()
-                self.director.set_paused(False)
 
         elif action == "reset":
             self.replay_session.clock.stop()

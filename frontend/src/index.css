@@ -4,7 +4,52 @@
 
 :root {
   color-scheme: dark;
+
+  /* ── Theme tokens (dark defaults) ─────────────────────────────── */
+  --bg-deep:    #0a0a12;
+  --bg-panel:   #080810;
+  --bg-main:    #07070e;
+  --bg-card:    #111120;
+  --bg-card2:   #1a1a2c;
+  --border:     #1e1e2e;
+  --border-sub: #131320;
 }
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-deep:    #f4f6f9;
+  --bg-panel:   #edf0f4;
+  --bg-main:    #e8ecf1;
+  --bg-card:    #ffffff;
+  --bg-card2:   #f0f4f8;
+  --border:     #d1d5db;
+  --border-sub: #e5e7eb;
+}
+
+/* ── Light-mode overrides for hardcoded Tailwind dark classes ─────── */
+[data-theme="light"] .bg-\[\#0a0a12\]  { background-color: var(--bg-deep)   !important; }
+[data-theme="light"] .bg-\[\#080810\]  { background-color: var(--bg-panel)  !important; }
+[data-theme="light"] .bg-\[\#07070e\]  { background-color: var(--bg-main)   !important; }
+[data-theme="light"] .bg-\[\#111120\]  { background-color: var(--bg-card)   !important; }
+[data-theme="light"] .bg-\[\#1a1a2c\]  { background-color: var(--bg-card2)  !important; }
+[data-theme="light"] .bg-\[\#1a1a28\]  { background-color: var(--bg-card2)  !important; }
+[data-theme="light"] .bg-\[\#13131a\]  { background-color: var(--bg-card)   !important; }
+[data-theme="light"] .bg-\[\#0a0a0f\]  { background-color: var(--bg-deep)   !important; }
+[data-theme="light"] .border-\[\#1e1e2e\] { border-color: var(--border)     !important; }
+[data-theme="light"] .border-\[\#131320\] { border-color: var(--border-sub) !important; }
+[data-theme="light"] .border-\[\#252535\] { border-color: var(--border)     !important; }
+[data-theme="light"] .border-\[\#2e2e45\] { border-color: #c4c8d0           !important; }
+[data-theme="light"] .text-white        { color: #0f172a  !important; }
+[data-theme="light"] .text-gray-100     { color: #1e293b  !important; }
+[data-theme="light"] .text-gray-200     { color: #334155  !important; }
+[data-theme="light"] .text-gray-300     { color: #475569  !important; }
+[data-theme="light"] .text-gray-400     { color: #64748b  !important; }
+[data-theme="light"] .text-gray-500     { color: #94a3b8  !important; }
+[data-theme="light"] .text-gray-600     { color: #b0bac8  !important; }
+[data-theme="light"] .hover\:bg-\[\#111120\]:hover { background-color: var(--bg-card2) !important; }
+[data-theme="light"] .hover\:text-gray-300:hover   { color: #334155 !important; }
+[data-theme="light"] .hover\:text-gray-400:hover   { color: #475569 !important; }
 
 * {
   box-sizing: border-box;
@@ -64,6 +109,55 @@ body {
 @keyframes flash-goal {
   0% { background-color: rgba(239, 68, 68, 0.9); transform: scale(1.5); }
   100% { background-color: rgba(239, 68, 68, 0.3); transform: scale(1); }
+}
+
+/* ── Goal celebration animation ───────────────────────────────────── */
+@keyframes goal-bg-fade {
+  0%   { opacity: 0; }
+  8%   { opacity: 0.82; }
+  65%  { opacity: 0.82; }
+  100% { opacity: 0; }
+}
+
+@keyframes goal-text-entrance {
+  0%   { transform: scale(0.2) rotate(-8deg); opacity: 0; }
+  18%  { transform: scale(1.25) rotate(2deg);  opacity: 1; }
+  28%  { transform: scale(0.92) rotate(-1deg); }
+  38%  { transform: scale(1.08); }
+  50%  { transform: scale(1)    rotate(0deg);  opacity: 1; }
+  80%  { transform: scale(1);                  opacity: 1; }
+  100% { transform: scale(1.05);               opacity: 0; }
+}
+
+@keyframes goal-subtitle-entrance {
+  0%   { transform: translateY(16px); opacity: 0; }
+  25%  { transform: translateY(0);    opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes goal-ring-expand {
+  0%   { width: 48px;  height: 48px;  opacity: 1;   border-width: 4px; }
+  100% { width: 420px; height: 420px; opacity: 0;   border-width: 1px; }
+}
+
+.goal-anim-bg {
+  animation: goal-bg-fade 3.2s ease-out forwards;
+}
+.goal-anim-title {
+  animation: goal-text-entrance 3.4s ease-out forwards;
+}
+.goal-anim-sub {
+  animation: goal-subtitle-entrance 3.4s ease-out 0.18s both;
+}
+.goal-anim-sub2 {
+  animation: goal-subtitle-entrance 3.4s ease-out 0.34s both;
+}
+.goal-anim-ring {
+  position: absolute;
+  border-radius: 50%;
+  border-style: solid;
+  animation: goal-ring-expand 1.6s ease-out forwards;
 }
 
 /* Slider styling */

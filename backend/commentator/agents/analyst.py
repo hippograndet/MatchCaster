@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from commentator.agents.base import BaseAgent, _state_to_summary
 from commentator.agents.prompts import build_analyst_system, build_analyst_prompt
@@ -41,7 +41,7 @@ class AnalystAgent(BaseAgent):
         snapshot_text: str = "",
         trigger_type: str = "timer",
         trigger_detail: str = "",
-        trace=None,
+        trace: Any = None,
     ) -> str:
         """
         Generate a single macro insight line.

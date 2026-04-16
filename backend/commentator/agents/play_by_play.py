@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from commentator.agents.base import BaseAgent, _events_to_text, _state_to_summary
 from commentator.agents.prompts import build_pbp_batch_system, build_pbp_batch_prompt
@@ -47,7 +47,7 @@ class PlayByPlayAgent(BaseAgent):
         is_opening: bool = False,
         is_high_speed: bool = False,
         match_meta: str = "",
-        trace=None,
+        trace: Any = None,
     ) -> list[CommentaryLine]:
         """
         Generate a batch of commentary lines for a window of events.
@@ -81,7 +81,7 @@ class PlayByPlayAgent(BaseAgent):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning(f"Batch generation error ({exc}), using fallback")
+            logger.warning(f"Batch generation error ({type(exc).__name__}: {exc}), using fallback")
 
         return self._fallback_batch(events, state)
 
