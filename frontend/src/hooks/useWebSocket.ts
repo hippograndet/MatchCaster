@@ -25,10 +25,16 @@ export interface AgentCommentary {
   timestamp: number
 }
 
+export interface BackendInfo {
+  backend: string
+  model: string
+}
+
 export interface UseWebSocketReturn {
   connected: boolean
   matchState: MatchState | null
   matchTime: number
+  displayTime: number
   speed: number
   running: boolean
   matchEnded: boolean
@@ -40,6 +46,7 @@ export interface UseWebSocketReturn {
   analysis: MatchAnalysis | null
   nicknameMap: Record<string, string>
   ttsReady: boolean
+  backendInfo: BackendInfo | null
   setOnAudioReceived: (cb: ((msg: AudioMessage) => void) | null) => void
   sendAction: (action: string, extra?: Record<string, unknown>) => void
   debugTraces: PipelineTrace[]
@@ -50,11 +57,14 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
   const audioCallbackRef = useRef<((msg: AudioMessage) => void) | null>(null)
+  const hasConnectedRef = useRef(false)
   const [ttsReady, setTtsReady] = useState(false)
+  const [backendInfo, setBackendInfo] = useState<BackendInfo | null>(null)
 
   const [connected, setConnected] = useState(false)
   const [matchState, setMatchState] = useState<MatchState | null>(null)
   const [matchTime, setMatchTime] = useState(0)
+  const [displayTime, setDisplayTime] = useState(0)
   const [speed, setSpeed] = useState(1)
   const [running, setRunning] = useState(false)
   const [matchEnded, setMatchEnded] = useState(false)
@@ -92,6 +102,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
       case 'state':
         setMatchState(msg.state)
         setMatchTime(msg.clock.match_time)
+        setDisplayTime(msg.clock.match_time)
         setSpeed(msg.clock.speed)
         setRunning(msg.clock.running)
         if (msg.nickname_map) setNicknameMap(msg.nickname_map)
@@ -100,6 +111,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
 
       case 'clock':
         setMatchTime(msg.match_time)
+        setDisplayTime(msg.match_time)
         setSpeed(msg.speed)
         setRunning(msg.running)
         if (msg.state) setMatchState(msg.state)
@@ -153,6 +165,10 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
         setTtsReady(true)
         break
 
+      case 'backend_status':
+        setBackendInfo({ backend: msg.backend, model: msg.model })
+        break
+
       case 'ping':
         break
 
@@ -172,6 +188,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
 
     ws.onopen = () => {
       if (!mountedRef.current) { ws.close(); return }
+      hasConnectedRef.current = true
       setConnected(true)
     }
     ws.onmessage = (evt) => handleMessage(evt.data)
@@ -186,11 +203,13 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
 
   useEffect(() => {
     mountedRef.current = true
+    hasConnectedRef.current = false
     setRecentEvents([])
     setGoalEvents([])
     setMatchEnded(false)
     setCurrentPeriod(1)
     setTtsReady(false)
+    setBackendInfo(null)
     setAnalysis(null)
     setAgentCommentaries({ play_by_play: null, tactical: null, stats: null })
     if (matchId) connect()
@@ -200,6 +219,16 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
       if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close() }
     }
   }, [matchId, connect])
+
+  // Client-side interpolation: tick displayTime every 100ms when running.
+  // Server snapshots (above) correct any drift each 500ms.
+  useEffect(() => {
+    if (!running) return
+    const id = setInterval(() => {
+      setDisplayTime(t => t + 0.1 * speed)
+    }, 100)
+    return () => clearInterval(id)
+  }, [running, speed, matchTime])
 
   const sendAction = useCallback(
     (action: string, extra?: Record<string, unknown>) => {
@@ -214,6 +243,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     connected,
     matchState,
     matchTime,
+    displayTime,
     speed,
     running,
     matchEnded,
@@ -225,6 +255,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     analysis,
     nicknameMap,
     ttsReady,
+    backendInfo,
     setOnAudioReceived,
     sendAction,
     debugTraces,

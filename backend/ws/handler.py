@@ -58,7 +58,20 @@ class MatchSession:
 
         self._init_teams()
         self._load_nicknames()
+        # Apply nicknames to ALL events upfront so blocks generated before the clock
+        # starts (from _all_events) use short names, not StatsBomb full names.
+        for ev in self.replay_session.events:
+            if ev.player in self._nickname_map:
+                ev.player = self._nickname_map[ev.player]
+            recip = ev.details.get("pass_recipient")
+            if recip and recip in self._nickname_map:
+                ev.details["pass_recipient"] = self._nickname_map[recip]
+            sub = ev.details.get("sub_replacement")
+            if sub and sub in self._nickname_map:
+                ev.details["sub_replacement"] = self._nickname_map[sub]
+
         self._snapshots: list[dict] = []   # populated lazily on first seek
+        self._warmup_started: bool = False
 
         # Give the director all events immediately (don't wait for async enrichment)
         self.director.set_all_events(self.replay_session.events)
@@ -111,6 +124,14 @@ class MatchSession:
                         # Use nickname if present, else extract last name
                         short = nickname.strip() if nickname.strip() else _extract_short_name(full_name)
                         self._nickname_map[full_name] = short
+                        # Also map "First Last" variant — StatsBomb events may use a
+                        # shorter form than the lineup's player_name (e.g. "Lionel Messi"
+                        # vs "Lionel Andrés Messi Cuccittini").
+                        parts = full_name.split()
+                        if len(parts) >= 3:
+                            first_last = f"{parts[0]} {parts[-1]}"
+                            if first_last not in self._nickname_map:
+                                self._nickname_map[first_last] = short
             logger.info(f"Loaded {len(self._nickname_map)} player nicknames")
         except Exception as exc:
             logger.warning(f"Could not load nicknames: {exc}")
@@ -200,10 +221,61 @@ class MatchSession:
 
         logger.info(f"Enrichment loaded: {full_meta.competition} | {full_meta.stadium} | weather={weather.description if weather and weather.available else 'N/A'}")
 
-        # Warm up TTS model in background, broadcast tts_ready when done
-        asyncio.get_event_loop().create_task(
-            self.director._tts.warmup(self._broadcast)
+        # Warm up TTS and Ollama in parallel; gate tts_ready on BOTH completing
+        # so the play button is only enabled once the system can actually generate commentary.
+        asyncio.get_event_loop().create_task(self._warmup_systems())
+
+    async def _warmup_llm_backend(self) -> None:
+        """Warm up the active LLM backend if it requires a warmup call (Ollama only)."""
+        from commentator.llm import get_backend
+        backend = get_backend()
+        if backend.needs_warmup:
+            try:
+                await backend.warmup()
+                logger.info(f"{backend.name} ({backend.model_name}) warmed up and ready")
+            except Exception as exc:
+                logger.warning(f"LLM warmup skipped ({type(exc).__name__}: {exc})")
+        else:
+            logger.info(f"{backend.name} ({backend.model_name}) ready (no warmup needed)")
+
+    async def _warmup_systems(self) -> None:
+        """Warm up TTS and LLM backend in parallel; broadcast tts_ready only after both finish."""
+        if self._warmup_started:
+            return
+        self._warmup_started = True
+
+        from commentator.llm import get_backend
+        from config import LLM_BACKEND
+
+        # Broadcast which backend is active so the frontend can show the badge
+        backend = get_backend()
+        await self._broadcast({
+            "type": "backend_status",
+            "backend": LLM_BACKEND,
+            "model": backend.model_name,
+        })
+
+        async def _noop(_: dict) -> None:
+            pass  # suppress premature tts_ready from TTS warmup
+
+        await asyncio.gather(
+            self.director._tts.warmup(_noop),
+            self._warmup_llm_backend(),
+            return_exceptions=True,
         )
+        # Kick off block pre-generation immediately — backend is warm and the user
+        # hasn't pressed play yet, giving the LLM a head start on the opening blocks.
+        self.director.pregenerate_blocks()
+        # Gate the play button on the first block being fully ready.
+        # Groq is fast (~2s); Ollama may need up to 150s on first run.
+        preload_timeout = 15.0 if LLM_BACKEND == "groq" else 150.0
+        try:
+            await asyncio.wait_for(self.director._preload_done.wait(), timeout=preload_timeout)
+        except asyncio.TimeoutError:
+            logger.warning("Preload wait timed out — enabling play anyway")
+            self.director._preload_done.set()
+        await self._broadcast({"type": "tts_ready"})
+        logger.info("All systems ready — play enabled")
 
     def _ensure_snapshots(self) -> None:
         """Compute (once) the 5-min stat snapshots for this match."""
@@ -302,12 +374,16 @@ class MatchSession:
         if action == "play":
             speed = float(msg.get("speed", self.replay_session.clock.speed))
             self.director.set_base_speed(speed)
+
+            # Unpause the director. If blocks were pre-generated during warmup,
+            # set_paused skips duplicate spawning (_next_block_start > current_time).
             self.director.set_paused(False)
+
             self.replay_session.clock.set_speed(speed)
-            if self.replay_session.clock._paused:
-                self.replay_session.clock.resume()
-            else:
-                self.replay_session.clock.start()
+            if not self.replay_session.clock._running:
+                self.replay_session.clock.start()   # fresh clock: creates loop task
+            elif self.replay_session.clock._paused:
+                self.replay_session.clock.resume()  # paused clock: unpauses existing loop
 
         elif action == "pause":
             # BUG FIX: pause commentary AND clock together
@@ -379,7 +455,7 @@ class MatchSession:
             self.director.is_paused = False
             self.director._match_ended = False
             self.director._opening_done = False
-            self.director._next_batch_game_time = 0.0
+            self.director._next_block_start = 0.0
             self._goal_scorers = {}
             self.replay_session.clock.start()
 

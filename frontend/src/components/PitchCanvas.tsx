@@ -13,7 +13,7 @@ export interface PossessionSegment {
   type: 'carry' | 'pass' | 'cross' | 'dribble' | 'shot'
   gameTimeSec: number
   arrivalWallMs: number
-  durationMs: number      // kept for compat; visual animation uses fixed speeds instead
+  durationMs: number      // real-time ms derived from StatsBomb duration; 0 = use fallback speeds
   possessionId: number
   segmentIndex: number
 }
@@ -53,14 +53,33 @@ const INTRA_POSSESSION_FADE_MS = 60_000
 // When a possession ends and is shown as the last-known fallback, fade it out over 6 seconds.
 const ENDED_POSSESSION_FADE_MS = 6_000
 
-// Visual travel speeds (StatsBomb units per second at 1× match speed).
-// Ball always moves at these speeds regardless of event timing — ensures fluid animation.
+// Fallback travel speeds in StatsBomb units/sec at 1× match speed.
+// Used only when no real duration is available from the data.
+// SB pitch is 120×80 ≈ 105×68 m, so 1 SB unit ≈ 0.875 m.
+// pass 17 SB/s ≈ 15 m/s (54 km/h), shot 30 SB/s ≈ 26 m/s (94 km/h)
 const VISUAL_SPEEDS: Partial<Record<PossessionSegment['type'], number>> = {
-  pass:    55,   // quick — pass crosses the pitch in ~2 s
-  cross:   50,   // similar to pass, slightly floatier
-  carry:   7,    // jogging pace (~6 km/h in SB units)
-  dribble: 5,    // slower, twisting runs
-  shot:    120,  // very fast — ball in flight
+  pass:    17,   // realistic ground pass
+  cross:   20,   // driven cross — slightly faster
+  carry:   6,    // jogging with ball (~5 m/s)
+  dribble: 4,    // tight twisting run
+  shot:    30,   // hard shot
+}
+
+const ease = {
+  inOut:  (t: number) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+  out:    (t: number) => 1 - (1 - t) * (1 - t),
+  linear: (t: number) => t,
+}
+
+function applyEase(seg: PossessionSegment, t: number): number {
+  switch (seg.type) {
+    case 'carry':   return ease.inOut(t)
+    case 'dribble': return ease.inOut(t)
+    case 'pass':    return ease.out(t)
+    case 'cross':   return ease.out(t)
+    case 'shot':    return ease.linear(t)
+    default:        return ease.out(t)
+  }
 }
 const HOME_COLOR = '#22c55e'
 const AWAY_COLOR = '#3b82f6'
@@ -277,12 +296,15 @@ function getMarkerColor(m: PitchMarker): string {
   return EVENT_COLORS.default
 }
 
-// Returns how many real-time milliseconds it takes to visually traverse a segment at a given match speed.
+// Returns how many real-time milliseconds it takes to visually traverse a segment.
+// Prefers the real StatsBomb duration (already speed-adjusted in App.tsx).
+// Falls back to distance ÷ realistic speed constant when duration is missing.
 function segVisualDurationMs(seg: PossessionSegment, matchSpeed: number): number {
+  if (seg.durationMs > 0) return Math.max(60, seg.durationMs)
   const dx = seg.to[0] - seg.from[0]
   const dy = seg.to[1] - seg.from[1]
   const dist = Math.sqrt(dx * dx + dy * dy)
-  const speed = (VISUAL_SPEEDS[seg.type] ?? 7) * Math.max(0.25, matchSpeed)
+  const speed = (VISUAL_SPEEDS[seg.type] ?? 6) * Math.max(0.25, matchSpeed)
   return Math.max(60, (dist / speed) * 1000)
 }
 
@@ -407,9 +429,8 @@ function drawPossessionTrail(
   }
 
   // ── Animated ball dot ───────────────────────────────────────────────────
-  // Ball position is driven by fixed visual speeds (carry = slow, pass = fast, shot = very fast),
-  // scaled by matchSpeed. This ensures the ball is always in motion during an active possession,
-  // independent of when events happen to arrive.
+  // Ball position uses real StatsBomb duration when available; falls back to
+  // distance-based speed constants. Easing is applied per action type.
   if (isActive && trail.length > 0) {
     const elapsed = now - trail[0].arrivalWallMs
 
@@ -438,8 +459,9 @@ function drawPossessionTrail(
 
     const { x: x1, y: y1 } = sbToCanvas(ballSeg.from[0], ballSeg.from[1], width, height, padding)
     const { x: x2, y: y2 } = sbToCanvas(ballSeg.to[0], ballSeg.to[1], width, height, padding)
-    const bx = x1 + (x2 - x1) * ballProgress
-    const by = y1 + (y2 - y1) * ballProgress
+    const easedProgress = applyEase(ballSeg, ballProgress)
+    const bx = x1 + (x2 - x1) * easedProgress
+    const by = y1 + (y2 - y1) * easedProgress
 
     const isHome = ballSeg.team === homeTeam
     const teamRgb = isHome ? '34,197,94' : '59,130,246'

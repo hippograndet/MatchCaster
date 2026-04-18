@@ -1,13 +1,52 @@
 # MatchCaster — AI Football Commentary Engine
 
-A fully local, multi-agent AI football commentary system. Replays real StatsBomb match data with live synthesized audio commentary from two AI commentators, displayed on an interactive pitch visualizer.
+A multi-agent AI football commentary system. Replays real StatsBomb match data with live synthesized audio commentary from two AI commentators, displayed on an interactive pitch visualizer.
 
 ```
-StatsBomb JSON → Replay Engine → Director (look-ahead batch) → LLM (Ollama)
-                                                              → Piper TTS
+StatsBomb JSON → Replay Engine → Director (look-ahead batch) → LLM (Groq API or Ollama)
+                                                              → Kokoro/Piper TTS
                                → Analysis Engine
                                → WebSocket → React Frontend
 ```
+
+---
+
+## LLM Backend
+
+MatchCaster supports two commentary backends, selected at startup:
+
+### Cloud — Groq API (default, recommended)
+
+Fast cloud inference (~400 tok/s). Free tier available. Requires an internet connection.
+
+```bash
+# 1. Get a free API key at https://console.groq.com
+export GROQ_API_KEY=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
+
+# 2. Start (Groq is the default)
+./start.sh
+# or explicitly:
+./start.sh groq
+```
+
+> Commentary blocks generate in ~2 seconds with Groq. No model download required.
+
+### Local — Ollama (offline)
+
+Runs entirely on your machine. Requires a capable CPU/GPU. Slower on older Intel Macs (~20–30 s per block).
+
+```bash
+# 1. Install Ollama
+brew install ollama
+
+# 2. Pull the model
+ollama pull gemma2:2b-instruct-q4_K_M
+
+# 3. Start in local mode
+./start.sh local
+```
+
+> Note: On Intel Macs (no Metal/GPU), generation may lag behind real-time play at 1× speed. Use 0.5× speed or lower for smooth commentary.
 
 ---
 
@@ -17,20 +56,16 @@ StatsBomb JSON → Replay Engine → Director (look-ahead batch) → LLM (Ollama
 |---|---|---|
 | Python | 3.11+ | [python.org](https://python.org) |
 | Node.js | 18+ | [nodejs.org](https://nodejs.org) |
-| Ollama | latest | `brew install ollama` |
+| Ollama | latest | `brew install ollama` — only required for `./start.sh local` |
 | Piper TTS | 2023.11.14-2 | Standalone bundle — see Step 3 |
 
 ---
 
 ## Setup (one-time)
 
-### 1. Start Ollama and pull the model
+### 1. Choose your LLM backend
 
-```bash
-brew install ollama
-ollama serve &               # start in background (or open Ollama.app)
-ollama pull mistral:7b-instruct-q4_K_M
-```
+See the [LLM Backend](#llm-backend) section above. For the quickest setup, use Groq (cloud) — just export your key and skip Ollama entirely.
 
 ### 2. Download match data
 
@@ -99,7 +134,9 @@ cd frontend && npm install && cd ..
 ## Running the app
 
 ```bash
-./start.sh
+./start.sh          # Groq cloud (default) — requires GROQ_API_KEY
+./start.sh groq     # same as above, explicit
+./start.sh local    # Ollama offline — requires model pulled
 ```
 
 Starts both the backend (port 8000) and frontend (port 5173). Press `Ctrl+C` to stop.
@@ -195,10 +232,15 @@ backend/
 │
 ├── commentator/
 │   ├── agents/
-│   │   ├── base.py          BaseAgent + Ollama streaming
+│   │   ├── base.py          BaseAgent ABC + prompt assembly
 │   │   ├── play_by_play.py  Live action narration (batch JSON output)
 │   │   ├── analyst.py       Expert macro commentary (replaces tactical+stats)
 │   │   └── prompts.py       System prompts + user prompt builders
+│   ├── llm/
+│   │   ├── __init__.py      Backend singleton (get_backend / init_backend)
+│   │   ├── backend.py       LLMBackend ABC
+│   │   ├── groq.py          Groq cloud backend (OpenAI-compatible SSE)
+│   │   └── ollama.py        Ollama local backend
 │   ├── tts/
 │   │   ├── engine.py        Piper TTS wrapper → WAV bytes (+ macOS say fallback)
 │   │   └── voices.py        Agent → voice model mapping
@@ -217,8 +259,10 @@ All tunables live in `backend/config.py`:
 | Key | Default | Description |
 |---|---|---|
 | `DEFAULT_SPEED_MULTIPLIER` | `1.0` | Replay speed on startup |
-| `OLLAMA_MODEL` | `mistral:7b-instruct-q4_K_M` | LLM model |
-| `OLLAMA_TIMEOUT_SEC` | `45.0` | Per-read timeout for Ollama streaming |
+| `LLM_BACKEND` | `groq` | `"groq"` (cloud) or `"local"` (Ollama) |
+| `GROQ_MODEL` | `llama-3.1-8b-instant` | Groq model |
+| `OLLAMA_MODEL` | `gemma2:2b-instruct-q4_K_M` | Ollama model (local mode only) |
+| `OLLAMA_TIMEOUT_SEC` | `90.0` | Per-call timeout for Ollama streaming |
 | `MAX_OUTPUT_TOKENS` | `50` | Hard token cap per commentary batch |
 | `PBP_BATCH_WINDOW_MIN_SEC` | `30.0` | Minimum look-ahead window (game-sec) |
 | `PBP_BATCH_WINDOW_MAX_SEC` | `90.0` | Maximum look-ahead window at high speed |
@@ -233,7 +277,7 @@ All tunables live in `backend/config.py`:
 
 | Failure | Fallback |
 |---|---|
-| Ollama offline / slow | Template commentary ("Shot — great save!") |
+| LLM unavailable / slow | Template commentary ("Shot — great save!") |
 | Piper TTS not installed | macOS `say` built-in voices |
 | Piper TTS crashes | macOS `say` built-in voices |
 | Audio queue overflow | Oldest items dropped |

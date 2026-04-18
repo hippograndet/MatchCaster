@@ -104,54 +104,29 @@ class BaseAgent(ABC):
             trace.llm_used_fallback = True
         return self._fallback(events, state)
 
-    async def _call_ollama(self, prompt: str, system_prompt: Optional[str] = None, trace: Any = None) -> str:
-        """Stream /api/generate and collect output up to MAX_OUTPUT_TOKENS."""
-        import json
+    async def _call_llm(self, prompt: str, system_prompt: Optional[str] = None, trace: Any = None) -> str:
+        """Dispatch to the active LLM backend and return raw generated text."""
         import time as _time
+        from commentator.llm import get_backend
 
-        url = f"{self.ollama_url}/api/generate"
-        payload = {
-            "model": self.model,
-            "system": system_prompt if system_prompt is not None else self.system_prompt,
-            "prompt": prompt,
-            "stream": True,
-            "options": {
-                "temperature": self.temperature,
-                "num_predict": MAX_OUTPUT_TOKENS,
-                "num_ctx": 2048,
-                "stop": ["\n\n", "###", "---"],
-            },
-        }
-
-        tokens: list[str] = []
-        token_count = 0
+        system = system_prompt if system_prompt is not None else self.system_prompt
         _start = _time.monotonic()
 
-        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT_SEC) as client:
-            async with client.stream("POST", url, json=payload) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except ValueError:
-                        continue
+        raw = await get_backend().generate(
+            system=system,
+            prompt=prompt,
+            temperature=self.temperature,
+            max_tokens=MAX_OUTPUT_TOKENS,
+        )
 
-                    tok = chunk.get("response", "")
-                    if tok:
-                        tokens.append(tok)
-                        token_count += 1
-
-                    if chunk.get("done") or token_count >= MAX_OUTPUT_TOKENS:
-                        break
-
-        raw = "".join(tokens)
         if trace is not None:
             trace.llm_raw_response = raw
-            trace.llm_token_count = token_count
+            trace.llm_token_count = len(raw.split())
             trace.llm_generation_ms = (_time.monotonic() - _start) * 1000
         return raw
+
+    # Keep old name as alias so any external callers still work
+    _call_ollama = _call_llm
 
     def _clean(self, text: str) -> str:
         """Strip leading/trailing whitespace, remove internal newlines."""

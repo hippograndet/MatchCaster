@@ -54,13 +54,13 @@ class MatchClock:
     def pause(self) -> None:
         """Pause the clock (match time stops advancing)."""
         self._paused = True
-        logger.info("Clock paused")
+        logger.info(f"Clock paused at {self._match_time:.1f}s")
 
     def resume(self) -> None:
         """Resume the clock after a pause."""
         self._paused = False
         self._last_real_time = time.monotonic()
-        logger.info("Clock resumed")
+        logger.info(f"Clock resumed at {self._match_time:.1f}s")
 
     def stop(self) -> None:
         """Stop the clock and cancel its background task."""
@@ -77,6 +77,8 @@ class MatchClock:
     def set_speed(self, multiplier: float) -> None:
         """Change the speed multiplier on the fly."""
         multiplier = max(0.1, min(multiplier, 50.0))
+        if multiplier == self._speed:
+            return   # no-op; don't log duplicate speed changes
         self._speed = multiplier
         logger.info(f"Clock speed changed to {multiplier}×")
 

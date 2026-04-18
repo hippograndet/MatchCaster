@@ -172,6 +172,10 @@ def _build_details(event: dict) -> dict:
     details["second"] = event.get("second", 0)
     details["under_pressure"] = event.get("under_pressure", False)
 
+    # Actual action duration from StatsBomb (seconds). Used by the frontend
+    # to drive realistic animation speed instead of fixed visual constants.
+    details["duration"] = event.get("duration")
+
     return details
 
 
@@ -211,7 +215,7 @@ def load_events(match_id: str) -> list[MatchEvent]:
 
     # Sort by timestamp, then original index for ties
     parsed.sort(key=lambda e: (e.timestamp_sec, e.index))
-    logger.info(f"Loaded {len(parsed)} events for match {match_id}")
+    logger.debug(f"Loaded {len(parsed)} events for match {match_id}")
     return parsed
 
 

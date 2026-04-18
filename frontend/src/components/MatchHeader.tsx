@@ -9,6 +9,7 @@ interface MatchHeaderProps {
   awayTeam: string
   score: { home: number; away: number }
   matchTime: number
+  displayTime: number
   running: boolean
   matchEnded: boolean
   goalEvents: GoalEvent[]
@@ -17,9 +18,11 @@ interface MatchHeaderProps {
   awayColor: string
 }
 
-/** Format seconds → mm' */
+/** Format seconds → mm'ss" */
 function fmtClock(sec: number): string {
-  return `${Math.floor(sec / 60)}'`
+  const min = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${min}'${String(s).padStart(2, '0')}"`
 }
 
 /** Format "Firstname Lastname" → "F. Lastname" */
@@ -30,7 +33,7 @@ function shortName(name: string): string {
 }
 
 export const MatchHeader: React.FC<MatchHeaderProps> = ({
-  homeTeam, awayTeam, score, matchTime, running, matchEnded,
+  homeTeam, awayTeam, score, matchTime, displayTime, running, matchEnded,
   goalEvents, matchMeta, homeColor, awayColor,
 }) => {
   const homeGoals = goalEvents.filter(g => g.team === homeTeam)
@@ -41,7 +44,7 @@ export const MatchHeader: React.FC<MatchHeaderProps> = ({
     ? 'FT'
     : matchTime === 0
     ? 'Pre-match'
-    : fmtClock(matchTime)
+    : fmtClock(displayTime)
 
   // Meta line: competition + venue
   const metaParts: string[] = []

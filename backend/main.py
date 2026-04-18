@@ -11,13 +11,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import HOST, PORT
+from commentator.llm import init_backend
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    format="%(asctime)s  %(name)-14s %(levelname)-8s %(message)s",
+    datefmt="%H:%M:%S",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
+# Suppress noisy third-party loggers
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)   # frontend polling noise
+logging.getLogger("httpx").setLevel(logging.WARNING)            # raw URL logs from API calls
+logging.getLogger("phonemizer").setLevel(logging.CRITICAL)      # cosmetic word-count warnings
 logger = logging.getLogger("[MAIN]")
 
 # ---------------------------------------------------------------------------
@@ -37,6 +43,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Initialise LLM backend (must happen before any agent calls)
+# ---------------------------------------------------------------------------
+init_backend()
 
 # ---------------------------------------------------------------------------
 # Mount routers

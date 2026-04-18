@@ -18,6 +18,7 @@ interface SidebarTabsProps {
   // Score panel props
   score: { home: number; away: number }
   matchTime: number
+  displayTime: number
   running: boolean
   matchEnded: boolean
   currentPeriod: number
@@ -36,10 +37,12 @@ function fmtMin(sec: number): string {
 }
 
 function fmtClock(sec: number, period: number): string {
+  const s = Math.floor(Math.max(0, sec) % 60)
   const min = Math.floor(Math.max(0, sec) / 60)
   const halfEnd: Record<number, number> = { 1: 45, 2: 90, 3: 105, 4: 120 }
   const cap = halfEnd[period] ?? 90
-  return min <= cap ? `${min}'` : `${cap}+${min - cap}'`
+  const ss = String(s).padStart(2, '0')
+  return min <= cap ? `${min}'${ss}"` : `${cap}+${min - cap}'${ss}"`
 }
 
 /** Format as "F. Lastname" */
@@ -112,10 +115,10 @@ function formatDetail(ev: MatchEventData): string | null {
 
 function ScorePanel({
   homeTeam, awayTeam, homeColor, awayColor,
-  score, matchTime, running, matchEnded, currentPeriod, goalEvents, matchMeta,
+  score, matchTime, displayTime, running, matchEnded, currentPeriod, goalEvents, matchMeta,
 }: Pick<SidebarTabsProps,
   'homeTeam' | 'awayTeam' | 'homeColor' | 'awayColor' |
-  'score' | 'matchTime' | 'running' | 'matchEnded' | 'currentPeriod' | 'goalEvents' | 'matchMeta'
+  'score' | 'matchTime' | 'displayTime' | 'running' | 'matchEnded' | 'currentPeriod' | 'goalEvents' | 'matchMeta'
 >) {
   const homeGoals = goalEvents.filter(g => g.team === homeTeam)
   const awayGoals = goalEvents.filter(g => g.team === awayTeam)
@@ -124,7 +127,7 @@ function ScorePanel({
     ? 'FT'
     : matchTime === 0
     ? 'Pre-match'
-    : fmtClock(matchTime, currentPeriod)
+    : fmtClock(displayTime, currentPeriod)
 
   const metaParts: string[] = []
   if (matchMeta?.competition) metaParts.push(matchMeta.competition)
@@ -465,6 +468,7 @@ export const SidebarTabs: React.FC<SidebarTabsProps> = (props) => {
         awayColor={props.awayColor}
         score={props.score}
         matchTime={props.matchTime}
+        displayTime={props.displayTime}
         running={props.running}
         matchEnded={props.matchEnded}
         currentPeriod={props.currentPeriod}

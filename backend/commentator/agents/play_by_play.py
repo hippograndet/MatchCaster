@@ -10,8 +10,13 @@ import logging
 from typing import Any, Optional
 
 from commentator.agents.base import BaseAgent, _events_to_text, _state_to_summary
-from commentator.agents.prompts import build_pbp_batch_system, build_pbp_batch_prompt
-from commentator.queue import CommentaryLine
+from commentator.agents.prompts import (
+    build_pbp_batch_system,
+    build_pbp_batch_prompt,
+    build_flow_block_system,
+    build_flow_block_user,
+)
+from commentator.queue import CommentaryLine, CommentaryBlock
 from commentator.tts.engine import get_tts_engine
 from player.loader import MatchEvent
 from analyser.state import SharedMatchState
@@ -20,12 +25,13 @@ logger = logging.getLogger("[PLAY_BY_PLAY]")
 
 
 class PlayByPlayAgent(BaseAgent):
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, personality: str = "neutral", **kwargs) -> None:
         super().__init__(
             name="play_by_play",
-            system_prompt=build_pbp_batch_system("neutral"),
+            system_prompt=build_pbp_batch_system(personality),
             **kwargs,
         )
+        self.personality = personality
 
     def build_prompt(self, events: list[MatchEvent], state: SharedMatchState) -> str:
         """Legacy single-event prompt (used by BaseAgent.generate fallback path)."""
@@ -228,3 +234,77 @@ class PlayByPlayAgent(BaseAgent):
         if not events:
             return ""
         return self._fallback_single(events[-1], state)
+
+    # ------------------------------------------------------------------
+    # Flow-block generation — main entry point for time-block PBP
+    # ------------------------------------------------------------------
+
+    async def generate_flow_block(
+        self,
+        block_start: float,
+        block_end: float,
+        events: list[MatchEvent],
+        state: SharedMatchState,
+        analysis_context: str = "",
+        analyst_context: str = "",
+        match_meta: str = "",
+        is_opening: bool = False,
+    ) -> CommentaryBlock:
+        """
+        Generate one flowing commentary paragraph covering the block window.
+        Returns a CommentaryBlock with text set; audio_bytes synthesized separately.
+        """
+        is_quiet = len(events) < 3
+
+        events_text = _events_to_text(events) if events else "(no events — dead ball or pause)"
+        state_summary = _state_to_summary(state)
+        recent_utterances = state.recent_utterances_text(3)
+
+        system = build_flow_block_system(getattr(self, "personality", "neutral"))
+        user = build_flow_block_user(
+            events_text=events_text,
+            state_summary=state_summary,
+            recent_utterances=recent_utterances,
+            analyst_context=analyst_context,
+            match_meta=match_meta,
+            is_opening=is_opening,
+            is_quiet=is_quiet,
+        )
+        if analysis_context:
+            user = f"[MATCH INTELLIGENCE]\n{analysis_context}\n\n{user}"
+
+        text = ""
+        try:
+            raw = await self._call_ollama(user, system_prompt=system)
+            text = self._clean(raw)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(f"Flow-block generation error ({type(exc).__name__}: {exc}), using fallback")
+            text = self._fallback_block(events, state, is_opening)
+
+        if not text:
+            text = self._fallback_block(events, state, is_opening)
+
+        return CommentaryBlock(
+            block_start=block_start,
+            block_end=block_end,
+            text=text,
+            agent_name="play_by_play",
+        )
+
+    def _fallback_block(
+        self, events: list[MatchEvent], state: SharedMatchState, is_opening: bool
+    ) -> str:
+        """Simple template fallback for flow blocks when Ollama fails."""
+        if is_opening:
+            home = state.home_team or "Home"
+            away = state.away_team or "Away"
+            return f"And we are underway — {home} vs {away}, it all begins now."
+        if not events:
+            return "Play has paused momentarily. Both sides take a breath."
+        # Use the most notable event in the block
+        critical = [e for e in events if e.priority == "critical"]
+        notable = [e for e in events if e.priority == "notable"]
+        ev = (critical or notable or events)[-1]
+        return self._fallback_single(ev, state) or "Play continues."

@@ -1,13 +1,13 @@
 # backend/director/router.py
-# Director: orchestrates the two-commentator look-ahead batch system.
+# Director: orchestrates the time-block PBP + analyst commentary system.
 #
 # Architecture:
-#   _batch_scheduler_loop   — fires one PBP batch per window (look-ahead)
-#   _analyst_scheduler_loop — fires analyst on timer + event triggers
+#   _block_scheduler_loop   — keeps PBP_BLOCKS_AHEAD flow blocks pre-generated
+#   _dispatch_blocks_loop   — time-triggers blocks when clock reaches block_start
+#   _analyst_scheduler_loop — fires analyst on timer + event triggers + dead-ball
 #
-# Commentary is pre-generated for the next N game-seconds.
-# When events arrive, dispatch_for_event() is called by MatchSession,
-# which retrieves the pre-synthesized audio and broadcasts it immediately.
+# PBP commentary is one paragraph per 15-game-second block (scales with speed).
+# Each block covers ALL events in its window; dispatched by clock time, not events.
 
 from __future__ import annotations
 
@@ -19,9 +19,8 @@ from typing import Optional, Callable, Awaitable
 
 from config import (
     MAX_CONCURRENT_AGENT_CALLS,
-    PBP_BATCH_WINDOW_MIN_SEC,
-    PBP_BATCH_WINDOW_MAX_SEC,
-    PBP_BATCH_REAL_BUDGET_SEC,
+    PBP_BLOCK_DURATION_GAME_SEC,
+    PBP_BLOCKS_AHEAD,
     ANALYST_MIN_GAP_GAME_SEC,
     ANALYST_MAX_GAP_GAME_SEC,
     ANALYST_BLOCK_FIRST_SEC,
@@ -31,13 +30,13 @@ from config import (
     DEV_MODE,
 )
 from debug.trace import PipelineTrace
-from analyser.classifier import classify_and_tag, SequenceDetector, CRITICAL, NOTABLE, ROUTINE
+from analyser.classifier import classify_and_tag, SequenceDetector
 from analyser.engine import AnalysisSnapshot
 from analyser.state import SharedMatchState, AgentUtterance
 from player.loader import MatchEvent
 from commentator.agents.play_by_play import PlayByPlayAgent
 from commentator.agents.analyst import AnalystAgent
-from commentator.queue import AudioQueue, EventTaggedQueue, CommentaryLine
+from commentator.queue import AudioQueue, EventTaggedQueue, CommentaryBlock, TimeBlockQueue
 from commentator.tts.engine import get_tts_engine
 
 logger = logging.getLogger("[DIRECTOR]")
@@ -76,11 +75,13 @@ class Director:
         self._base_speed: float = DEFAULT_SPEED_MULTIPLIER
         self._speed_override_until: float = 0.0
 
-        # Batch scheduler state
-        self._next_batch_game_time: float = 0.0
-        self._opening_done: bool = False    # first batch scene-setter fired
-        self._batch_scheduler_task: Optional[asyncio.Task] = None
-        self._current_batch_task: Optional[asyncio.Task] = None   # in-flight generation task
+        # Time-block PBP scheduler state
+        self.time_block_queue: TimeBlockQueue = TimeBlockQueue()
+        self._next_block_start: float = 0.0      # game-time frontier for block generation
+        self._opening_done: bool = False          # first block scene-setter fired
+        self._block_scheduler_task: Optional[asyncio.Task] = None
+        self._dispatch_blocks_task: Optional[asyncio.Task] = None
+        self._preload_done: asyncio.Event = asyncio.Event()   # set when first block is ready
 
         # Analyst scheduler state
         self._analyst_scheduler_task: Optional[asyncio.Task] = None
@@ -101,34 +102,51 @@ class Director:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        self._batch_scheduler_task = asyncio.get_event_loop().create_task(
-            self._batch_scheduler_loop()
-        )
-        self._analyst_scheduler_task = asyncio.get_event_loop().create_task(
-            self._analyst_scheduler_loop()
-        )
+        loop = asyncio.get_event_loop()
+        self._block_scheduler_task = loop.create_task(self._block_scheduler_loop())
+        self._dispatch_blocks_task = loop.create_task(self._dispatch_blocks_loop())
+        self._analyst_scheduler_task = loop.create_task(self._analyst_scheduler_loop())
         logger.info("Director started (paused=True, waiting for play)")
 
     def stop(self) -> None:
-        self.is_paused = True   # makes any in-flight _generate_pbp_batch / _fire_analyst exit early
-        self._match_ended = True  # prevents post-goal/analyst tasks from continuing
-        for t in (self._batch_scheduler_task, self._analyst_scheduler_task):
+        self.is_paused = True
+        self._match_ended = True
+        for t in (self._block_scheduler_task, self._dispatch_blocks_task, self._analyst_scheduler_task):
             if t:
                 t.cancel()
 
     def set_paused(self, paused: bool) -> None:
+        # Idempotency guard — prevents duplicate generation from double-play calls.
+        if self.is_paused == paused:
+            return
         self.is_paused = paused
-        logger.info(f"Director {'paused' if paused else 'resumed'}")
+        logger.info(f"Director {'paused' if paused else 'resumed'} at {self.state.current_match_time:.1f}s")
         if not paused and self._all_events:
-            # Eagerly fire the first batch immediately when play starts,
-            # so commentary is ready before the scheduler loop's next tick.
             current_time = self.state.current_match_time
-            window = self._compute_window(self._base_speed)
-            window_end = current_time + window
-            self._next_batch_game_time = window_end  # prevent scheduler double-firing
-            self._current_batch_task = asyncio.get_event_loop().create_task(
-                self._generate_pbp_batch(current_time, window_end)
-            )
+            # Only spawn initial blocks if pre-generation hasn't already advanced
+            # _next_block_start past the current time (avoids duplicate generation).
+            if self._next_block_start <= current_time:
+                self._next_block_start = current_time
+                loop = asyncio.get_event_loop()
+                block_dur = self._compute_block_duration()
+                for i in range(PBP_BLOCKS_AHEAD):
+                    bstart = current_time + i * block_dur
+                    bend = bstart + block_dur
+                    loop.create_task(self._generate_pbp_block(bstart, bend))
+                self._next_block_start = current_time + PBP_BLOCKS_AHEAD * block_dur
+
+    def pregenerate_blocks(self) -> None:
+        """Pre-generate opening blocks while still paused (called after warmup).
+        Gives Ollama a head start so blocks are ready (or near-ready) when play is pressed."""
+        if not self._all_events or self._preload_done.is_set():
+            return
+        block_dur = self._compute_block_duration()
+        loop = asyncio.get_event_loop()
+        for i in range(PBP_BLOCKS_AHEAD):
+            bstart = float(i) * block_dur
+            loop.create_task(self._generate_pbp_block(bstart, bstart + block_dur, pregenerate=True))
+        self._next_block_start = float(PBP_BLOCKS_AHEAD) * block_dur
+        logger.info(f"Pre-generating {PBP_BLOCKS_AHEAD} opening blocks while loading")
 
     def set_base_speed(self, speed: float) -> None:
         self._base_speed = speed
@@ -168,14 +186,13 @@ class Director:
         self._analyst_ctx_snapshot = "\n".join(a_parts)
 
     def on_seek(self, target_time: float) -> None:
-        """Called by MatchSession on seek — cancel in-flight batch, clear queue, update pointer."""
-        # Best-effort cancel of any in-flight Ollama batch request
-        if self._current_batch_task and not self._current_batch_task.done():
-            self._current_batch_task.cancel()
-            self._current_batch_task = None
+        """Called by MatchSession on seek — clear pre-generated blocks, reset pointer."""
         self.event_tagged_queue.clear()
-        self._next_batch_game_time = target_time
+        self.time_block_queue.clear()
+        self._next_block_start = target_time
         self._opening_done = True   # don't re-fire the opening scene-setter after a seek
+        # Reset preload gate so dispatch_blocks_loop waits for new blocks
+        self._preload_done.clear()
         logger.info(f"Director seek updated to {target_time:.0f}s")
 
     # ------------------------------------------------------------------
@@ -252,10 +269,14 @@ class Director:
                 break
 
     # ------------------------------------------------------------------
-    # Batch scheduler loop
+    # Time-block scheduler loop
     # ------------------------------------------------------------------
 
-    async def _batch_scheduler_loop(self) -> None:
+    async def _block_scheduler_loop(self) -> None:
+        """
+        Keeps PBP_BLOCKS_AHEAD blocks pre-generated ahead of current game time.
+        Fires every 300 ms; spawns background tasks for any blocks that need generating.
+        """
         try:
             while not self._match_ended:
                 await asyncio.sleep(0.3)
@@ -264,103 +285,169 @@ class Director:
                     continue
 
                 current_time = self.state.current_match_time
-                if current_time < self._next_batch_game_time:
-                    continue
+                block_dur = self._compute_block_duration()
+                lookahead = block_dur * PBP_BLOCKS_AHEAD
+                target_frontier = current_time + lookahead
 
-                window = self._compute_window(self._base_speed)
-                window_end = current_time + window
-                self._next_batch_game_time = window_end
-
-                self._current_batch_task = asyncio.get_event_loop().create_task(
-                    self._generate_pbp_batch(current_time, window_end)
-                )
+                while self._next_block_start < target_frontier:
+                    bstart = self._next_block_start
+                    bend = bstart + block_dur
+                    self._next_block_start = bend
+                    asyncio.get_event_loop().create_task(
+                        self._generate_pbp_block(bstart, bend)
+                    )
 
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            logger.error(f"Batch scheduler error: {exc}")
+            logger.error(f"Block scheduler error: {exc}")
 
-    def _compute_window(self, speed: float) -> float:
-        """Game-seconds to look ahead. Keeps real budget ~22s."""
-        raw = PBP_BATCH_REAL_BUDGET_SEC * max(speed, 1.0)
-        return max(PBP_BATCH_WINDOW_MIN_SEC, min(raw, PBP_BATCH_WINDOW_MAX_SEC))
+    def _compute_block_duration(self) -> float:
+        """
+        Game-seconds per block.
+        Scales with playback speed so real-time per block stays ~15s.
+        """
+        return min(max(PBP_BLOCK_DURATION_GAME_SEC, PBP_BLOCK_DURATION_GAME_SEC * self._base_speed), 45.0)
 
-    async def _generate_pbp_batch(self, window_start: float, window_end: float) -> None:
-        """Generate a batch of PBP commentary lines for [window_start, window_end)."""
+    async def _generate_pbp_block(self, block_start: float, block_end: float, *, pregenerate: bool = False) -> None:
+        """Generate one flow-block paragraph for the game-time window [block_start, block_end).
+        pregenerate=True allows generation while the director is still paused (warmup head-start)."""
         async with self._sem:
-            if self.is_paused or self._match_ended:
+            if self._match_ended:
+                return
+            if self.is_paused and not pregenerate:
                 return
 
-            is_opening = not self._opening_done and window_start < 30.0
-            is_high_speed = self._base_speed >= 4.0
+            is_opening = not self._opening_done and block_start < 5.0
 
-            # Collect notable/critical events in window
-            events_in_window = [
+            # All events in window — no priority filter; LLM decides what to narrate
+            events = [
                 e for e in self._all_events
-                if window_start <= e.timestamp_sec < window_end
-                and e.priority in (CRITICAL, NOTABLE)
-            ]
+                if block_start <= e.timestamp_sec < block_end
+            ][:MAX_EVENTS_PER_BATCH]
 
-            # If very few notable events, pad with recent routine events for atmosphere
-            if len(events_in_window) < 2:
-                routine_fill = [
-                    e for e in self._all_events
-                    if window_start <= e.timestamp_sec < window_end
-                    and e.priority == ROUTINE
-                ]
-                events_in_window = (events_in_window + routine_fill)[:MAX_EVENTS_PER_BATCH]
-
-            events_in_window = events_in_window[:MAX_EVENTS_PER_BATCH]
-
-            if not events_in_window and not is_opening:
-                return
+            is_quiet = len(events) < 3
 
             try:
-                lines = await self._pbp.generate_batch(
-                    events=events_in_window,
+                block = await self._pbp.generate_flow_block(
+                    block_start=block_start,
+                    block_end=block_end,
+                    events=events,
                     state=self.state,
                     analysis_context=self._pbp_context,
                     analyst_context=self._analyst_context,
-                    is_opening=is_opening,
-                    is_high_speed=is_high_speed,
                     match_meta=self._match_context,
+                    is_opening=is_opening,
                 )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.error(f"PBP batch error: {exc}")
-                return
-
-            if not lines:
+                logger.error(f"PBP block generation error: {exc}")
+                # Ensure warmup gate is never left hanging on a hard failure
+                if not self._preload_done.is_set():
+                    self._preload_done.set()
                 return
 
             if is_opening:
                 self._opening_done = True
 
-            # Synthesize TTS for all lines in parallel
-            tts_tasks = [
-                self._synthesize_line(line)
-                for line in lines
-            ]
-            await asyncio.gather(*tts_tasks, return_exceptions=True)
+            # Signal preload complete as soon as text is ready — dispatch loop
+            # checks block.ready before dispatching, so TTS can finish in background.
+            if not self._preload_done.is_set():
+                self._preload_done.set()
 
-            # Store in event-tagged queue
-            self.event_tagged_queue.store(lines)
+            # Synthesize TTS for this block
+            await self._synthesize_block(block)
+
+            # Store in time-block queue
+            self.time_block_queue.store([block])
             logger.debug(
-                f"Batch stored: {len(lines)} lines for window "
-                f"{window_start:.0f}s-{window_end:.0f}s"
+                f"Block ready: [{block_start:.0f}s–{block_end:.0f}s] "
+                f"({'quiet' if is_quiet else 'active'}) {block.text[:60]!r}"
             )
 
-    async def _synthesize_line(self, line: CommentaryLine) -> None:
-        """Synthesize TTS for one commentary line in place."""
+            # Sparse block: trigger analyst if not in cooldown and not too recent
+            if is_quiet and not is_opening:
+                current_time = self.state.current_match_time
+                can_fire = (
+                    current_time >= ANALYST_BLOCK_FIRST_SEC
+                    and current_time >= self._analyst_cooldown_until
+                    and current_time - self._last_analyst_game_time >= 60.0
+                )
+                if can_fire:
+                    asyncio.get_event_loop().create_task(
+                        self._fire_analyst("dead_ball", "")
+                    )
+
+    async def _synthesize_block(self, block: CommentaryBlock) -> None:
+        """Synthesize TTS for one commentary block in place."""
         try:
             if self._tts.available:
-                audio = await self._tts.synthesize(line.text, line.agent_name)
-                line.audio_bytes = audio
-            line.ready = True
+                audio = await self._tts.synthesize(block.text, block.agent_name)
+                block.audio_bytes = audio
+            block.ready = True
         except Exception as exc:
-            logger.warning(f"TTS failed for line: {exc}")
-            line.ready = True  # mark ready even without audio
+            logger.warning(f"TTS failed for block: {exc}")
+            block.ready = True  # mark ready even without audio
+
+    # ------------------------------------------------------------------
+    # Time-block dispatch loop
+    # ------------------------------------------------------------------
+
+    async def _dispatch_blocks_loop(self) -> None:
+        """
+        Time-triggered: pop and broadcast blocks whose block_start ≤ current_match_time.
+        Waits for the preload gate before starting, ensuring commentary is ready before
+        the first block fires.
+        """
+        try:
+            # Wait until at least one block has been pre-generated
+            await self._preload_done.wait()
+
+            while not self._match_ended:
+                await asyncio.sleep(0.1)
+
+                if self.is_paused:
+                    continue
+
+                current_time = self.state.current_match_time
+                ready_blocks = self.time_block_queue.pop_ready(current_time)
+                for block in ready_blocks:
+                    if block.text:
+                        await self._broadcast_block(block, current_time)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error(f"Dispatch blocks error: {exc}")
+
+    async def _broadcast_block(self, block: CommentaryBlock, match_time: float) -> None:
+        """Broadcast a flow block to the audio queue and WebSocket clients."""
+        utterance = AgentUtterance(
+            agent_name=block.agent_name,
+            text=block.text,
+            match_time=match_time,
+            event_type="",
+        )
+        self.state.add_utterance(utterance)
+
+        await self.audio_queue.put_audio(
+            agent_name=block.agent_name,
+            match_time=match_time,
+            audio_bytes=block.audio_bytes,
+            text=block.text,
+        )
+
+        if self.broadcast_cb:
+            await self._safe_broadcast({
+                "type": "commentary",
+                "agent": block.agent_name,
+                "text": block.text,
+                "has_audio": block.audio_bytes is not None,
+                "match_time": match_time,
+            })
+
+        logger.info(f"[PBP BLOCK {block.block_start:.0f}s] dispatched at {match_time:.1f}s — {block.text!r}")
 
     # ------------------------------------------------------------------
     # Event dispatch (called by MatchSession for each arriving event)
@@ -368,51 +455,10 @@ class Director:
 
     async def dispatch_for_event(self, ev: MatchEvent) -> None:
         """
-        Check if a pre-generated commentary line exists for this event.
-        If yes, broadcast it immediately.
+        No-op in time-block mode — commentary is time-triggered by _dispatch_blocks_loop.
+        Kept for API compatibility with ws/handler.py.
         """
-        if self.is_paused or self._match_ended:
-            return
-
-        # Fire the opening scene-setter on the very first event
-        if not self._opening_done:
-            opening = self.event_tagged_queue.pop_opening()
-            if opening and opening.ready:
-                await self._broadcast_commentary_line(opening, ev.timestamp_sec)
-                self._opening_done = True
-
-        line = self.event_tagged_queue.pop_for_event(ev.id)
-        if line and line.ready and line.text:
-            await self._broadcast_commentary_line(line, ev.timestamp_sec)
-
-    async def _broadcast_commentary_line(
-        self, line: CommentaryLine, match_time: float
-    ) -> None:
-        utterance = AgentUtterance(
-            agent_name=line.agent_name,
-            text=line.text,
-            match_time=match_time,
-            event_type="",
-        )
-        self.state.add_utterance(utterance)
-
-        await self.audio_queue.put_audio(
-            agent_name=line.agent_name,
-            match_time=match_time,
-            audio_bytes=line.audio_bytes,
-            text=line.text,
-        )
-
-        if self.broadcast_cb:
-            await self._safe_broadcast({
-                "type": "commentary",
-                "agent": line.agent_name,
-                "text": line.text,
-                "has_audio": line.audio_bytes is not None,
-                "match_time": match_time,
-            })
-
-        logger.info(f"[{line.agent_name.upper()}] {line.text!r}")
+        pass
 
     # ------------------------------------------------------------------
     # Analyst scheduler loop
@@ -592,8 +638,9 @@ class Director:
 
     def set_personality(self, personality: str) -> None:
         self.personality = personality
-        from commentator.agents.prompts import build_pbp_batch_system, build_analyst_system
-        self._pbp.update_system_prompt(build_pbp_batch_system(personality))
+        from commentator.agents.prompts import build_flow_block_system, build_analyst_system
+        self._pbp.personality = personality
+        self._pbp.update_system_prompt(build_flow_block_system(personality))
         self._analyst.update_system_prompt(build_analyst_system(personality))
         logger.info(f"Personality set to: {personality}")
 

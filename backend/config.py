@@ -1,19 +1,34 @@
 # backend/config.py
 # All tunable constants for MatchCaster. Every other module imports from here.
 
+import os as _os
+
 # ---------------------------------------------------------------------------
 # Replay
 # ---------------------------------------------------------------------------
 DEFAULT_SPEED_MULTIPLIER: float = 1.0       # 1× real time (default)
 EVENT_BUFFER_LOOKAHEAD_SEC: float = 5.0     # Director looks ahead 5 match-seconds
-MAX_CONCURRENT_AGENT_CALLS: int = 2          # Don't overload GPU
+MAX_CONCURRENT_AGENT_CALLS: int = 1          # CPU-only: serial calls prevent thread contention
 
 # ---------------------------------------------------------------------------
-# Ollama
+# LLM backend selection
+# ---------------------------------------------------------------------------
+LLM_BACKEND: str = _os.getenv("LLM_BACKEND", "groq")   # "groq" | "local"
+
+# Groq (cloud, fast, free tier)
+GROQ_API_KEY: str = _os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL: str = "llama-3.1-8b-instant"
+GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+
+# Compact prompts for local Ollama (removes style examples to reduce prefill tokens)
+COMPACT_PROMPTS: bool = LLM_BACKEND == "local"
+
+# ---------------------------------------------------------------------------
+# Ollama (used when LLM_BACKEND=local)
 # ---------------------------------------------------------------------------
 OLLAMA_BASE_URL: str = "http://localhost:11434"
-OLLAMA_MODEL: str = "mistral:7b-instruct-q4_K_M"
-OLLAMA_TIMEOUT_SEC: float = 45.0            # Covers cold model load (~6s) + generation
+OLLAMA_MODEL: str = "gemma2:2b-instruct-q4_K_M"
+OLLAMA_TIMEOUT_SEC: float = 90.0
 MAX_OUTPUT_TOKENS: int = 50                 # Keep commentary lines SHORT (~35 words max)
 
 AGENT_TEMPERATURES: dict[str, float] = {
@@ -32,7 +47,7 @@ PIPER_VOICES: dict[str, str] = {
     "tactical":     "en_GB-alan-medium",
     "stats":        "en_US-amy-medium",
 }
-MAX_AUDIO_DURATION_SEC: float = 6.0          # Truncate TTS output longer than this
+MAX_AUDIO_DURATION_SEC: float = 10.0         # Truncate TTS output longer than this (raised for flow blocks)
 
 # ---------------------------------------------------------------------------
 # Director priority weights
@@ -60,11 +75,13 @@ PRIORITY_WEIGHTS: dict[str, int] = {
 PBP_PRIORITY: int = 1       # Highest — speaks during action
 ANALYST_PRIORITY: int = 2   # Expert analyst (merged tactical + stats)
 
-# Look-ahead batch window (game-seconds)
-# Formula: clamp(22s * speed, min=30, max=90)
-PBP_BATCH_WINDOW_MIN_SEC: float = 30.0   # minimum look-ahead (game-sec)
-PBP_BATCH_WINDOW_MAX_SEC: float = 90.0   # maximum look-ahead (game-sec)
-PBP_BATCH_REAL_BUDGET_SEC: float = 22.0  # target real-time budget for generation
+# Time-block PBP — replaces the old per-event batch system
+PBP_BLOCK_DURATION_GAME_SEC: float = 15.0   # game-sec per block at 1× speed (scales with speed)
+PBP_BLOCKS_AHEAD: int = 4                    # how many blocks to keep pre-generated ahead
+PBP_BLOCK_MAX_AUDIO_SEC: float = 10.0        # TTS duration cap for flow blocks
+PBP_BLOCK_MAX_WORDS: int = 25               # target word budget per block
+# Kept for Ollama generation time budget guard (used in _compute_block_duration)
+PBP_BATCH_REAL_BUDGET_SEC: float = 22.0
 
 # Analyst scheduling
 ANALYST_MIN_GAP_GAME_SEC: float = 300.0   # 5 game-minutes minimum between timer firings
@@ -83,7 +100,6 @@ MAX_AUDIO_QUEUE_SIZE: int = 3   # Drop stale items beyond this
 # ---------------------------------------------------------------------------
 # Data paths (relative to repo root, i.e. one level above backend/)
 # ---------------------------------------------------------------------------
-import os as _os
 _BACKEND_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _ROOT_DIR = _os.path.dirname(_BACKEND_DIR)
 
@@ -98,9 +114,10 @@ HOST: str = "0.0.0.0"
 PORT: int = 8000
 
 # ---------------------------------------------------------------------------
-# Routine event skip rate (director)
+# Routine event skip rate (legacy — no longer used in time-block PBP)
 # ---------------------------------------------------------------------------
-ROUTINE_SKIP_RATE: float = 0.9   # Skip 90% of routine pass/carry events
+# ROUTINE_SKIP_RATE was 0.9 (skip 90% of routine events). Removed: time-block
+# generation passes ALL events to the LLM for narrative context.
 
 # ---------------------------------------------------------------------------
 # Developer mode (never True in production)

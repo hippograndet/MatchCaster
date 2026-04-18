@@ -27,9 +27,11 @@ from commentator.tts.voices import MACOS_SAY_VOICES
 
 logger = logging.getLogger("[TTS]")
 
-# Suppress phonemizer's word-count mismatch warnings — they're cosmetic
+# Suppress phonemizer's word-count mismatch warnings — they're cosmetic.
+# filterwarnings covers warnings.warn(); setLevel covers logging.warning() used by phonemizer.
 warnings.filterwarnings("ignore", message="words count mismatch", module="phonemizer")
 warnings.filterwarnings("ignore", message="words count mismatch")
+logging.getLogger("phonemizer").setLevel(logging.ERROR)
 
 # ---------------------------------------------------------------------------
 # Kokoro model paths

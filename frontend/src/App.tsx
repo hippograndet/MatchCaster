@@ -10,7 +10,7 @@ import { MatchSelectModal } from './components/MatchSelectModal'
 import { CommentaryOverlay } from './components/CommentaryOverlay'
 import DevPanel from './components/DevPanel'
 import { useWebSocket } from './hooks/useWebSocket'
-import type { AgentCommentary } from './hooks/useWebSocket'
+import type { AgentCommentary, BackendInfo } from './hooks/useWebSocket'
 import { useAudioPlayer } from './hooks/useAudioPlayer'
 import type {
   PitchMarker, PitchOverlays, Personality, HeatmapTeam, LineupPlayer, MatchInfo,
@@ -210,8 +210,9 @@ export default function App() {
 
   // ── WebSocket ─────────────────────────────────────────────────────────
   const {
-    connected, matchState, matchTime, speed, running, matchEnded, currentPeriod,
+    connected, matchState, matchTime, displayTime, speed, running, matchEnded, currentPeriod,
     recentEvents, goalEvents, matchMeta, analysis,
+    ttsReady, backendInfo,
     setOnAudioReceived, sendAction, debugTraces,
   } = useWebSocket(selectedMatch)
 
@@ -312,9 +313,14 @@ export default function App() {
         const [fx, fy] = latest.position
         const [tx, ty] = latest.end_position
         const dist = Math.sqrt((tx - fx) ** 2 + (ty - fy) ** 2)
-        const estimatedDuration = (segType === 'carry' || segType === 'dribble')
-          ? Math.max(600, dist * 120)
-          : Math.max(200, dist * 20)
+        const rawDurationSec = typeof (latest.details as Record<string, unknown>)?.duration === 'number'
+          ? (latest.details as Record<string, unknown>).duration as number
+          : null
+        // Real-time ms: convert game-seconds to wall-ms, scaled by playback speed.
+        // 0 signals PitchCanvas to fall back to distance-based speed constants.
+        const durationMs = rawDurationSec != null
+          ? Math.max(60, (rawDurationSec * 1000) / Math.max(0.25, speed))
+          : 0
 
         const seg: PossessionSegment = {
           from: latest.position,
@@ -324,7 +330,7 @@ export default function App() {
           type: segType,
           gameTimeSec:   latest.timestamp_sec,
           arrivalWallMs: now,
-          durationMs:    estimatedDuration,
+          durationMs,
           possessionId:  possessionIdRef.current,
           segmentIndex:  possessionSegmentsRef.current.length,
         }
@@ -503,6 +509,13 @@ export default function App() {
               Change Match
             </button>
           )}
+          {backendInfo && (
+            <div className="font-mono text-[10px] px-2 py-0.5 rounded border border-[#1e1e2e] text-gray-500 select-none"
+              title={`LLM: ${backendInfo.model}`}>
+              {backendInfo.backend === 'groq' ? '⚡ Cloud' : '💻 Local'}
+              <span className="ml-1 text-gray-600">{backendInfo.model.split('-')[0]}</span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5">
             <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'}`} />
             <span className="font-mono text-[10px] text-gray-600">{connected ? 'Connected' : 'Offline'}</span>
@@ -609,6 +622,7 @@ export default function App() {
             awayColor={awayColor}
             score={score}
             matchTime={matchTime}
+            displayTime={displayTime}
             running={running}
             matchEnded={matchEnded}
             currentPeriod={currentPeriod}
@@ -627,7 +641,7 @@ export default function App() {
         currentPeriod={currentPeriod}
         matchEnded={matchEnded}
         connected={connected}
-        ttsReady={true}
+        ttsReady={ttsReady}
         muted={muted}
         homeColor={homeColor}
         awayColor={awayColor}

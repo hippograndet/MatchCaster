@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -76,12 +77,83 @@ class EventTaggedQueue:
         self._opening_line = None
         # Do NOT reset _opening_fired — a seek after the opening shouldn't re-fire it
 
+    def pop_any_ready(self) -> Optional[CommentaryLine]:
+        """Return any ready line from the pending pool.
+        Used as a dead-air safety valve when the exact event-ID match is missed
+        (e.g. a late-arriving fallback batch after an Ollama timeout)."""
+        for event_id, line in list(self._pending.items()):
+            if line.ready and line.text:
+                del self._pending[event_id]
+                return line
+        return None
+
     def has_pending(self) -> bool:
         return bool(self._pending) or (self._opening_line is not None and not self._opening_fired)
 
     @property
     def pending_count(self) -> int:
         return len(self._pending)
+
+
+# ---------------------------------------------------------------------------
+# CommentaryBlock / TimeBlockQueue — time-triggered PBP blocks
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CommentaryBlock:
+    """One pre-generated paragraph covering a fixed game-time window."""
+    block_start: float                # game-seconds — when to fire
+    block_end: float                  # game-seconds — end of coverage
+    text: str
+    agent_name: str = "play_by_play"
+    audio_bytes: Optional[bytes] = None
+    ready: bool = False               # True once TTS has been synthesized
+
+
+class TimeBlockQueue:
+    """
+    Stores pre-generated CommentaryBlocks sorted by block_start.
+    Blocks are dispatched when the match clock reaches block_start.
+    """
+
+    def __init__(self) -> None:
+        # List of CommentaryBlock, kept sorted by block_start
+        self._blocks: list[CommentaryBlock] = []
+
+    def store(self, blocks: list[CommentaryBlock]) -> None:
+        """Insert blocks in sorted order by block_start."""
+        for block in blocks:
+            # bisect on block_start
+            keys = [b.block_start for b in self._blocks]
+            idx = bisect.bisect_left(keys, block.block_start)
+            self._blocks.insert(idx, block)
+
+    def pop_ready(self, current_game_time: float) -> list[CommentaryBlock]:
+        """
+        Return (and remove from queue) all blocks whose block_start <=
+        current_game_time AND ready=True.
+        """
+        ready: list[CommentaryBlock] = []
+        remaining: list[CommentaryBlock] = []
+        for block in self._blocks:
+            if block.block_start <= current_game_time and block.ready:
+                ready.append(block)
+            else:
+                remaining.append(block)
+        self._blocks = remaining
+        return ready
+
+    def clear(self) -> None:
+        self._blocks.clear()
+
+    @property
+    def next_unscheduled_start(self) -> Optional[float]:
+        """Lowest block_start still in the queue (ready or not)."""
+        return self._blocks[0].block_start if self._blocks else None
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._blocks)
 
 
 # ---------------------------------------------------------------------------
