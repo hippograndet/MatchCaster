@@ -339,6 +339,9 @@ export default function App() {
 
         const det = latest.details as Record<string, unknown>
         const isOutPass = latest.event_type === 'Pass' && det?.pass_outcome === 'Out'
+        const shotOutcome = latest.event_type === 'Shot' && typeof det?.shot_outcome === 'string'
+          ? det.shot_outcome as string
+          : undefined
 
         const seg: PossessionSegment = {
           from: latest.position,
@@ -352,6 +355,7 @@ export default function App() {
           possessionId:  possessionIdRef.current,
           segmentIndex:  possessionSegmentsRef.current.length,
           outOfPlay:     isOutPass || undefined,
+          shotOutcome,
         }
 
         possessionSegmentsRef.current = [...possessionSegmentsRef.current, seg]

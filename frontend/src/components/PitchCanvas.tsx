@@ -17,6 +17,7 @@ export interface PossessionSegment {
   possessionId: number
   segmentIndex: number
   outOfPlay?: boolean     // true when this action sent the ball out of bounds
+  shotOutcome?: string    // e.g. 'Goal', 'Saved', 'Blocked', 'Off T', 'Wayward'
 }
 
 export interface DangerEntry {
@@ -317,6 +318,8 @@ function drawBallHistory(
   history: PossessionSegment[],
   matchSpeed: number,
   homeTeam: string,
+  homeColor: string,
+  awayColor: string,
   width: number,
   height: number,
   padding: number
@@ -366,7 +369,9 @@ function drawBallHistory(
     }
 
     const isHome = seg.team === homeTeam
-    const teamRgb = isHome ? '34,197,94' : '59,130,246'
+    // Shots that didn't result in a goal are grey; everything else uses team color
+    const shotIncomplete = seg.type === 'shot' && seg.shotOutcome && seg.shotOutcome.toLowerCase() !== 'goal'
+    const teamColor = shotIncomplete ? '#94a3b8' : (isHome ? homeColor : awayColor)
 
     let lineWidth: number
     let lineDash: number[]
@@ -388,11 +393,11 @@ function drawBallHistory(
 
     ctx.save()
     ctx.globalAlpha = trailOpacity * alphaModifier
-    ctx.strokeStyle = `rgb(${teamRgb})`
+    ctx.strokeStyle = teamColor
     ctx.lineWidth = lineWidth
     ctx.lineCap = 'round'
     ctx.setLineDash(lineDash)
-    ctx.shadowColor = `rgba(${teamRgb},0.4)`
+    ctx.shadowColor = teamColor + '66'
     ctx.shadowBlur = 2 + trailOpacity * 5
     ctx.beginPath()
     ctx.moveTo(x1, y1)
@@ -406,7 +411,7 @@ function drawBallHistory(
       const al = 5 + trailOpacity * 2
       ctx.globalAlpha = trailOpacity
       ctx.shadowBlur = 0
-      ctx.fillStyle = `rgb(${teamRgb})`
+      ctx.fillStyle = teamColor
       ctx.beginPath()
       ctx.moveTo(x2, y2)
       ctx.lineTo(x2 - al * Math.cos(angle - Math.PI / 6), y2 - al * Math.sin(angle - Math.PI / 6))
@@ -426,7 +431,7 @@ function drawBallHistory(
       ctx.globalAlpha = trailOpacity * 0.9
       ctx.fillStyle = 'rgba(0,0,0,0.65)'
       ctx.fillRect(x1 - textW / 2 - 2, y1 - 12, textW + 4, 10)
-      ctx.fillStyle = `rgb(${teamRgb})`
+      ctx.fillStyle = teamColor
       ctx.fillText(lastName, x1, y1 - 2)
     }
 
@@ -482,16 +487,17 @@ function drawBallHistory(
   const pastEnd = !ballFound  // no in-progress segment — ball at rest
   const pulseR = pastEnd ? 3 + 1.5 * Math.abs(Math.sin(now * 0.004)) : 2.5
 
-  const isHome = ballSeg.team === homeTeam
-  const teamRgb = isHome ? '34,197,94' : '59,130,246'
+  const isHomeBall = ballSeg.team === homeTeam
+  const ballShotIncomplete = ballSeg.type === 'shot' && ballSeg.shotOutcome && ballSeg.shotOutcome.toLowerCase() !== 'goal'
+  const ballColor = ballShotIncomplete ? '#94a3b8' : (isHomeBall ? homeColor : awayColor)
 
   ctx.save()
-  ctx.shadowColor = `rgb(${teamRgb})`
+  ctx.shadowColor = ballColor
   ctx.shadowBlur = 12
   ctx.globalAlpha = 0.5
   ctx.beginPath()
   ctx.arc(bx, by, pulseR + 2.5, 0, Math.PI * 2)
-  ctx.fillStyle = `rgb(${teamRgb})`
+  ctx.fillStyle = ballColor
   ctx.fill()
   ctx.shadowBlur = 0
   ctx.globalAlpha = 1.0
@@ -785,7 +791,7 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({
         awayPrimaryRef.current, awaySecondaryRef.current)
     }
     if (ov.live) {
-      drawBallHistory(ctx, ballHistoryRef.current, matchSpeedRef.current, homeTeamRef.current, width, height, PADDING)
+      drawBallHistory(ctx, ballHistoryRef.current, matchSpeedRef.current, homeTeamRef.current, homePrimaryRef.current, awayPrimaryRef.current, width, height, PADDING)
       drawDangerEntries(ctx, dangerRef.current, homeTeamRef.current, width, height, PADDING)
       drawEvents(ctx, markersRef.current, width, height, PADDING)
     }
