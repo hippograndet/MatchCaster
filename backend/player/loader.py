@@ -23,12 +23,13 @@ class MatchEvent:
     event_type: str                               # "Pass", "Shot", "Goal Keeper", etc.
     team: str
     player: Optional[str]                         # None for team-level events (Starting XI etc.)
-    position: tuple[float, float]                 # (x, y) StatsBomb coords
+    position: tuple[float, float]                 # (x, y) — normalized to home-attacks-right perspective
     end_position: Optional[tuple[float, float]]
     details: dict                                 # raw extra fields (xG, pass type, outcome…)
     priority: str = "routine"                     # set by classifier later
     detected_patterns: list[str] = field(default_factory=list)
     index: int = 0                                # original event order
+    is_home: bool = True                          # True if this event belongs to the home team
 
 
 @dataclass
@@ -62,6 +63,35 @@ def _parse_timestamp(ts: str) -> float:
             return float(ts)
     except (ValueError, IndexError):
         return 0.0
+
+
+def _get_home_team(match_id: str) -> Optional[str]:
+    """
+    Determine the home team name from the lineup file.
+    StatsBomb lists the home team first in the lineup JSON array.
+    Falls back to None if file is missing or malformed.
+    """
+    lineup_path = Path(LINEUPS_DIR) / f"{match_id}.json"
+    if not lineup_path.exists():
+        return None
+    try:
+        with open(lineup_path, "r", encoding="utf-8") as f:
+            lineups: list[dict] = json.load(f)
+        if lineups:
+            return lineups[0].get("team_name")
+    except Exception:
+        pass
+    return None
+
+
+def _flip_coords(pos: tuple[float, float]) -> tuple[float, float]:
+    """
+    Flip coordinates for the away team so that home always attacks right (x → 120).
+    StatsBomb normalises per-team (both teams appear to attack toward x = 120 in their
+    own events). Flipping the away team's events maps them into the same fixed
+    home-perspective frame that the frontend renders.
+    """
+    return (120.0 - pos[0], 80.0 - pos[1])
 
 
 def _extract_position(event: dict) -> tuple[float, float]:
@@ -188,6 +218,8 @@ def load_events(match_id: str) -> list[MatchEvent]:
     with open(events_path, "r", encoding="utf-8") as f:
         raw_events: list[dict] = json.load(f)
 
+    home_team = _get_home_team(match_id)
+
     parsed: list[MatchEvent] = []
     for idx, ev in enumerate(raw_events):
         event_type_raw = ev.get("type", {})
@@ -200,16 +232,33 @@ def load_events(match_id: str) -> list[MatchEvent]:
         offset = period_offsets.get(period, 0)
         ts_sec = _parse_timestamp(ts) + offset
 
+        team_name = _extract_team(ev)
+        # is_home: True when home_team is unknown (safe default) or team matches
+        is_home = home_team is None or team_name == home_team
+
+        position = _extract_position(ev)
+        end_position = _extract_end_position(ev)
+
+        # Flip away-team coordinates so home always attacks right (x → 120).
+        # StatsBomb normalises per-team — both teams appear to attack toward x=120
+        # in their own events. Flipping the away team maps them into the same
+        # fixed home-perspective frame rendered by the frontend.
+        if not is_home:
+            position = _flip_coords(position)
+            if end_position is not None:
+                end_position = _flip_coords(end_position)
+
         match_event = MatchEvent(
             id=ev.get("id", str(idx)),
             timestamp_sec=ts_sec,
             event_type=event_type,
-            team=_extract_team(ev),
+            team=team_name,
             player=_extract_player(ev),
-            position=_extract_position(ev),
-            end_position=_extract_end_position(ev),
+            position=position,
+            end_position=end_position,
             details=_build_details(ev),
             index=idx,
+            is_home=is_home,
         )
         parsed.append(match_event)
 

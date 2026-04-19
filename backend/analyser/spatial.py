@@ -116,12 +116,13 @@ def pass_description(
     pass_type: str | None = None,
     is_cross: bool = False,
     is_through_ball: bool = False,
+    attacking_direction: str = "left_to_right",
 ) -> str:
     """
     Produce a natural-language description of a pass from start to end.
     """
-    start_desc = coords_to_description(*start)
-    end_desc = coords_to_description(*end)
+    start_desc = coords_to_description(*start, attacking_direction=attacking_direction)
+    end_desc = coords_to_description(*end, attacking_direction=attacking_direction)
 
     dx = end[0] - start[0]
     dy = end[1] - start[1]

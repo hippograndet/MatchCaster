@@ -140,6 +140,7 @@ def _event_to_dict(ev: MatchEvent) -> dict:
         "details": ev.details,
         "priority": ev.priority,
         "detected_patterns": ev.detected_patterns,
+        "is_home": ev.is_home,
     }
 
 

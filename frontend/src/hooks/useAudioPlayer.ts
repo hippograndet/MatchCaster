@@ -25,6 +25,7 @@ export interface UseAudioPlayerReturn {
   setMuted: (muted: boolean) => void
   muted: boolean
   setOnPlaybackStarted: (cb: ((e: PlaybackStartedEvent) => void) | null) => void
+  unlockAudio: () => void   // call on any user gesture to unblock autoplay
 }
 
 export function useAudioPlayer(): UseAudioPlayerReturn {
@@ -54,7 +55,7 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     return ctxRef.current
   }, [])
 
-  const playNext = useCallback(() => {
+  const playNext = useCallback(async () => {
     if (mutedRef.current) {
       queueRef.current = []
       isPlayingRef.current = false
@@ -72,6 +73,11 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     }
 
     const ctx = getCtx()
+    // Ensure context is running before starting playback (autoplay unlock)
+    if (ctx.state !== 'running') {
+      try { await ctx.resume() } catch { /* ignore */ }
+    }
+
     const source = ctx.createBufferSource()
     source.buffer = item.buffer
 
@@ -84,7 +90,6 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     setIsPlaying(true)
     setActiveAgent(item.agent)
 
-    // FIX: fire callback when THIS track STARTS playing — syncs overlay text with audio
     if (onPlaybackStartedRef.current) {
       onPlaybackStartedRef.current({
         agent: item.agent,
@@ -162,5 +167,14 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     }
   }, [])
 
-  return { activeAgent, isPlaying, handleAudioMessage, setMuted, muted, setOnPlaybackStarted }
+  // Call this in response to any user gesture (e.g. clicking Play) so the
+  // browser allows the AudioContext to run — required by autoplay policy.
+  const unlockAudio = useCallback(() => {
+    const ctx = getCtx()
+    if (ctx.state !== 'running') {
+      ctx.resume().catch(() => {})
+    }
+  }, [getCtx])
+
+  return { activeAgent, isPlaying, handleAudioMessage, setMuted, muted, setOnPlaybackStarted, unlockAudio }
 }

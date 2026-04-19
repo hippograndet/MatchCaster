@@ -177,7 +177,8 @@ class PlayByPlayAgent(BaseAgent):
 
     def _fallback_single(self, ev: MatchEvent, state: SharedMatchState) -> str:
         from analyser.spatial import coords_to_description
-        loc = coords_to_description(*ev.position)
+        direction = "left_to_right" if ev.is_home else "right_to_left"
+        loc = coords_to_description(*ev.position, attacking_direction=direction)
 
         if ev.event_type == "Shot":
             outcome = ev.details.get("shot_outcome", "")

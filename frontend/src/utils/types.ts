@@ -55,6 +55,7 @@ export interface MatchState {
 export type AgentName = 'play_by_play' | 'tactical' | 'stats'
 export type Personality = 'neutral' | 'enthusiastic' | 'analytical' | 'home_bias' | 'away_bias'
 export type HeatmapTeam = 'home' | 'away'
+export type PitchView = 'pitch' | 'formation' | 'heatmap' | 'shotmap' | 'vectors'
 
 export interface PitchOverlays {
   live: boolean

@@ -10,12 +10,13 @@ export interface PossessionSegment {
   to: [number, number]
   team: string
   player: string          // last name shown at the start of each segment
-  type: 'carry' | 'pass' | 'cross' | 'dribble' | 'shot'
+  type: 'carry' | 'pass' | 'cross' | 'dribble' | 'shot' | 'transition'
   gameTimeSec: number
   arrivalWallMs: number
   durationMs: number      // real-time ms derived from StatsBomb duration; 0 = use fallback speeds
   possessionId: number
   segmentIndex: number
+  outOfPlay?: boolean     // true when this action sent the ball out of bounds
 }
 
 export interface DangerEntry {
@@ -26,8 +27,7 @@ export interface DangerEntry {
 
 interface PitchCanvasProps {
   markers: PitchMarker[]
-  possessionTrail: PossessionSegment[]
-  isActivePossession: boolean
+  ballHistory: PossessionSegment[]
   matchSpeed: number
   dangerEntries: DangerEntry[]
   homeTeam: string
@@ -48,10 +48,9 @@ interface PitchCanvasProps {
 
 const MARKER_FADE_MS = 8000
 const FLASH_DURATION_MS = 700
-// Possession trail — segments fade linearly over 60 seconds. Anything older than 60s is invisible.
-const INTRA_POSSESSION_FADE_MS = 60_000
-// When a possession ends and is shown as the last-known fallback, fade it out over 6 seconds.
-const ENDED_POSSESSION_FADE_MS = 6_000
+// Unified ball history: segments fade linearly from when they started animating.
+// Anything older than 30s is invisible; pruned from App.tsx at 60s.
+const TRAIL_FADE_MS = 30_000
 
 // Fallback travel speeds in StatsBomb units/sec at 1× match speed.
 // Used only when no real duration is available from the data.
@@ -73,12 +72,13 @@ const ease = {
 
 function applyEase(seg: PossessionSegment, t: number): number {
   switch (seg.type) {
-    case 'carry':   return ease.inOut(t)
-    case 'dribble': return ease.inOut(t)
-    case 'pass':    return ease.out(t)
-    case 'cross':   return ease.out(t)
-    case 'shot':    return ease.linear(t)
-    default:        return ease.out(t)
+    case 'carry':      return ease.inOut(t)
+    case 'dribble':    return ease.inOut(t)
+    case 'pass':       return ease.out(t)
+    case 'cross':      return ease.out(t)
+    case 'shot':       return ease.linear(t)
+    case 'transition': return ease.out(t)
+    default:           return ease.out(t)
   }
 }
 const HOME_COLOR = '#22c55e'
@@ -304,104 +304,109 @@ function segVisualDurationMs(seg: PossessionSegment, matchSpeed: number): number
   const dx = seg.to[0] - seg.from[0]
   const dy = seg.to[1] - seg.from[1]
   const dist = Math.sqrt(dx * dx + dy * dy)
-  const speed = (VISUAL_SPEEDS[seg.type] ?? 6) * Math.max(0.25, matchSpeed)
+  const speed = (VISUAL_SPEEDS[seg.type as keyof typeof VISUAL_SPEEDS] ?? 6) * Math.max(0.25, matchSpeed)
   return Math.max(60, (dist / speed) * 1000)
 }
 
-// ---- Possession trail ----
-function drawPossessionTrail(
+// ---- Unified ball history ----
+// Renders a single continuous ball trail across all possessions and transitions.
+// Segments are sequenced using effStart = max(arrivalWallMs, prevSegEnd) so that
+// delivery jitter never causes two segments to animate simultaneously.
+function drawBallHistory(
   ctx: CanvasRenderingContext2D,
-  trail: PossessionSegment[],
-  isActive: boolean,
+  history: PossessionSegment[],
   matchSpeed: number,
   homeTeam: string,
   width: number,
   height: number,
   padding: number
 ) {
-  if (trail.length === 0) return
+  if (history.length === 0) return
   const now = Date.now()
 
-  // For an ended possession, apply a single global fade from when the last segment arrived.
-  let globalFade = 1.0
-  if (!isActive) {
-    const endedAt = trail[trail.length - 1].arrivalWallMs
-    globalFade = Math.max(0, 1 - (now - endedAt) / ENDED_POSSESSION_FADE_MS)
-    if (globalFade <= 0) return
+  // Walk history computing effective start time for each segment.
+  // effStart ensures animation is always sequential, regardless of arrival order.
+  let lastSegEnd = 0
+  const effStarts: number[] = []
+  for (const seg of history) {
+    const effStart = Math.max(seg.arrivalWallMs, lastSegEnd)
+    effStarts.push(effStart)
+    lastSegEnd = effStart + segVisualDurationMs(seg, matchSpeed)
   }
 
   // ── Draw trail lines ────────────────────────────────────────────────────
-  for (const seg of trail) {
-    // Opacity: linear fade over 60s from when the segment arrived.
-    const age = now - seg.arrivalWallMs
-    const rawOpacity = 1 - age / INTRA_POSSESSION_FADE_MS
-    const segOpacity = isActive
-      ? Math.max(0, rawOpacity)
-      : globalFade * Math.max(0, rawOpacity)
-    if (segOpacity < 0.02) continue
+  for (let i = 0; i < history.length; i++) {
+    const seg = history[i]
+    const effStart = effStarts[i]
+    const age = now - effStart
+    if (age < 0) continue  // not yet started
+
+    // Opacity fades linearly from when the segment started animating
+    const trailOpacity = Math.max(0, 1 - age / TRAIL_FADE_MS)
+    if (trailOpacity < 0.02) continue
+
+    const { x: x1, y: y1 } = sbToCanvas(seg.from[0], seg.from[1], width, height, padding)
+    const { x: x2, y: y2 } = sbToCanvas(seg.to[0], seg.to[1], width, height, padding)
+
+    // Transition segments: thin muted dashed connector, no arrowhead or label
+    if (seg.type === 'transition') {
+      ctx.save()
+      ctx.globalAlpha = trailOpacity * (seg.outOfPlay ? 0.12 : 0.22)
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1
+      ctx.lineCap = 'round'
+      ctx.setLineDash([2, 8])
+      ctx.beginPath()
+      ctx.moveTo(x1, y1)
+      ctx.lineTo(x2, y2)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.restore()
+      continue
+    }
 
     const isHome = seg.team === homeTeam
     const teamRgb = isHome ? '34,197,94' : '59,130,246'
 
-    let strokeRgb: string
     let lineWidth: number
     let lineDash: number[]
     let alphaModifier = 1.0
 
     switch (seg.type) {
       case 'carry':
-        strokeRgb = teamRgb
-        lineWidth = 1.5
-        lineDash = [4, 5]
-        alphaModifier = 0.65    // dotted, slightly muted — player running
-        break
+        lineWidth = 1.5; lineDash = [4, 5]; alphaModifier = 0.65; break
       case 'cross':
-        strokeRgb = teamRgb     // team color, long dashes = aerial ball
-        lineWidth = 2.0
-        lineDash = [6, 4]
-        break
+        lineWidth = 2.0; lineDash = [6, 4]; break
       case 'dribble':
-        strokeRgb = teamRgb     // team color, tight dots = individual skill
-        lineWidth = 2.0
-        lineDash = [2, 3]
-        break
+        lineWidth = 2.0; lineDash = [2, 3]; break
       case 'shot':
-        strokeRgb = teamRgb
-        lineWidth = 2.0
-        lineDash = [3, 3]
-        alphaModifier = 0.9
-        break
+        lineWidth = 2.0; lineDash = [3, 3]; alphaModifier = 0.9; break
       case 'pass':
       default:
-        strokeRgb = teamRgb
-        lineWidth = 1.5 + segOpacity * 0.5
-        lineDash = []
+        lineWidth = 1.5 + trailOpacity * 0.5; lineDash = []; break
     }
 
-    const { x: x1, y: y1 } = sbToCanvas(seg.from[0], seg.from[1], width, height, padding)
-    const { x: x2, y: y2 } = sbToCanvas(seg.to[0], seg.to[1], width, height, padding)
-
     ctx.save()
-    ctx.globalAlpha = segOpacity * alphaModifier
-    ctx.strokeStyle = `rgb(${strokeRgb})`
+    ctx.globalAlpha = trailOpacity * alphaModifier
+    ctx.strokeStyle = `rgb(${teamRgb})`
     ctx.lineWidth = lineWidth
     ctx.lineCap = 'round'
     ctx.setLineDash(lineDash)
-    ctx.shadowColor = `rgba(${strokeRgb},0.4)`
-    ctx.shadowBlur = 2 + segOpacity * 5
+    ctx.shadowColor = `rgba(${teamRgb},0.4)`
+    ctx.shadowBlur = 2 + trailOpacity * 5
     ctx.beginPath()
     ctx.moveTo(x1, y1)
     ctx.lineTo(x2, y2)
     ctx.stroke()
     ctx.setLineDash([])
 
-    // Arrowhead on passes, crosses, and shots (not carries or dribbles)
-    if ((seg.type === 'pass' || seg.type === 'cross' || seg.type === 'shot') && segOpacity > 0.2) {
+    // Arrowhead on passes, crosses, and shots
+    if ((seg.type === 'pass' || seg.type === 'cross' || seg.type === 'shot') && trailOpacity > 0.2) {
       const angle = Math.atan2(y2 - y1, x2 - x1)
-      const al = 5 + segOpacity * 2
-      ctx.globalAlpha = segOpacity
+      const al = 5 + trailOpacity * 2
+      ctx.globalAlpha = trailOpacity
       ctx.shadowBlur = 0
-      ctx.fillStyle = `rgb(${strokeRgb})`
+      ctx.fillStyle = `rgb(${teamRgb})`
       ctx.beginPath()
       ctx.moveTo(x2, y2)
       ctx.lineTo(x2 - al * Math.cos(angle - Math.PI / 6), y2 - al * Math.sin(angle - Math.PI / 6))
@@ -410,80 +415,91 @@ function drawPossessionTrail(
       ctx.fill()
     }
 
-    // Player last name at the 'from' point — shown when segment is recent enough
-    if (segOpacity > 0.35 && seg.player) {
+    // Player last name at the from point — shown while segment is fresh
+    if (trailOpacity > 0.35 && seg.player) {
       const lastName = seg.player.trim().split(/\s+/).pop() ?? seg.player
       ctx.shadowBlur = 0
       ctx.font = 'bold 8px monospace'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'bottom'
       const textW = ctx.measureText(lastName).width
-      ctx.globalAlpha = segOpacity * 0.9
+      ctx.globalAlpha = trailOpacity * 0.9
       ctx.fillStyle = 'rgba(0,0,0,0.65)'
       ctx.fillRect(x1 - textW / 2 - 2, y1 - 12, textW + 4, 10)
-      ctx.fillStyle = `rgb(${strokeRgb})`
+      ctx.fillStyle = `rgb(${teamRgb})`
       ctx.fillText(lastName, x1, y1 - 2)
     }
 
-    ctx.restore()
-  }
-
-  // ── Animated ball dot ───────────────────────────────────────────────────
-  // Ball position uses real StatsBomb duration when available; falls back to
-  // distance-based speed constants. Easing is applied per action type.
-  if (isActive && trail.length > 0) {
-    const elapsed = now - trail[0].arrivalWallMs
-
-    // Walk through segments accumulating visual time until we find where the ball is now.
-    let remaining = elapsed
-    let ballSeg = trail[0]
-    let ballProgress = 0
-    let pastEnd = false
-
-    for (let i = 0; i < trail.length; i++) {
-      const dur = segVisualDurationMs(trail[i], matchSpeed)
-      if (remaining <= dur) {
-        ballSeg = trail[i]
-        ballProgress = remaining / dur
-        break
-      }
-      remaining -= dur
-      if (i === trail.length - 1) {
-        // Ball has animated through all known segments; it stays at the last endpoint
-        // with a gentle pulse to indicate it's still in play.
-        ballSeg = trail[i]
-        ballProgress = 1.0
-        pastEnd = true
-      }
+    // OUT badge at endpoint — marks where the ball left the field
+    if (seg.outOfPlay && trailOpacity > 0.1) {
+      ctx.shadowBlur = 0
+      ctx.font = 'bold 7px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      const label = 'OUT'
+      const lw = ctx.measureText(label).width + 6
+      ctx.globalAlpha = trailOpacity * 0.85
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'
+      ctx.beginPath()
+      ctx.roundRect(x2 - lw / 2, y2 - 7, lw, 14, 3)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+      ctx.lineWidth = 0.5
+      ctx.stroke()
+      ctx.fillStyle = '#ffffff'
+      ctx.fillText(label, x2, y2)
     }
 
-    const { x: x1, y: y1 } = sbToCanvas(ballSeg.from[0], ballSeg.from[1], width, height, padding)
-    const { x: x2, y: y2 } = sbToCanvas(ballSeg.to[0], ballSeg.to[1], width, height, padding)
-    const easedProgress = applyEase(ballSeg, ballProgress)
-    const bx = x1 + (x2 - x1) * easedProgress
-    const by = y1 + (y2 - y1) * easedProgress
-
-    const isHome = ballSeg.team === homeTeam
-    const teamRgb = isHome ? '34,197,94' : '59,130,246'
-    // Pulse radius when waiting for next event — sinusoidal oscillation
-    const pulseR = pastEnd ? 3 + 1.5 * Math.abs(Math.sin(now * 0.004)) : 2.5
-
-    ctx.save()
-    ctx.shadowColor = `rgb(${teamRgb})`
-    ctx.shadowBlur = 12
-    ctx.globalAlpha = 0.5
-    ctx.beginPath()
-    ctx.arc(bx, by, pulseR + 2.5, 0, Math.PI * 2)
-    ctx.fillStyle = `rgb(${teamRgb})`
-    ctx.fill()
-    ctx.shadowBlur = 0
-    ctx.globalAlpha = 1.0
-    ctx.beginPath()
-    ctx.arc(bx, by, pulseR, 0, Math.PI * 2)
-    ctx.fillStyle = '#ffffff'
-    ctx.fill()
     ctx.restore()
   }
+
+  // ── Single animated ball dot ────────────────────────────────────────────
+  // Walk segments to find where the ball is right now.
+  // Default to last segment at progress=1.0 (ball at rest after all known events).
+  let ballSeg = history[history.length - 1]
+  let ballProgress = 1.0
+  let ballFound = false
+
+  for (let i = 0; i < history.length; i++) {
+    const seg = history[i]
+    const effStart = effStarts[i]
+    const dur = segVisualDurationMs(seg, matchSpeed)
+    const age = now - effStart
+
+    if (age >= 0 && age < dur) {
+      ballSeg = seg
+      ballProgress = age / dur
+      ballFound = true
+      break
+    }
+  }
+
+  const { x: x1, y: y1 } = sbToCanvas(ballSeg.from[0], ballSeg.from[1], width, height, padding)
+  const { x: x2, y: y2 } = sbToCanvas(ballSeg.to[0], ballSeg.to[1], width, height, padding)
+  const bx = x1 + (x2 - x1) * applyEase(ballSeg, ballProgress)
+  const by = y1 + (y2 - y1) * applyEase(ballSeg, ballProgress)
+
+  const pastEnd = !ballFound  // no in-progress segment — ball at rest
+  const pulseR = pastEnd ? 3 + 1.5 * Math.abs(Math.sin(now * 0.004)) : 2.5
+
+  const isHome = ballSeg.team === homeTeam
+  const teamRgb = isHome ? '34,197,94' : '59,130,246'
+
+  ctx.save()
+  ctx.shadowColor = `rgb(${teamRgb})`
+  ctx.shadowBlur = 12
+  ctx.globalAlpha = 0.5
+  ctx.beginPath()
+  ctx.arc(bx, by, pulseR + 2.5, 0, Math.PI * 2)
+  ctx.fillStyle = `rgb(${teamRgb})`
+  ctx.fill()
+  ctx.shadowBlur = 0
+  ctx.globalAlpha = 1.0
+  ctx.beginPath()
+  ctx.arc(bx, by, pulseR, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  ctx.restore()
 }
 
 // ---- Heatmap ----
@@ -685,8 +701,7 @@ function drawEvents(
 
 export const PitchCanvas: React.FC<PitchCanvasProps> = ({
   markers,
-  possessionTrail,
-  isActivePossession,
+  ballHistory,
   matchSpeed,
   dangerEntries,
   homeTeam,
@@ -707,8 +722,7 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animFrameRef = useRef<number>(0)
   const markersRef = useRef(markers)
-  const trailRef = useRef(possessionTrail)
-  const isActiveRef = useRef(isActivePossession)
+  const ballHistoryRef = useRef(ballHistory)
   const matchSpeedRef = useRef(matchSpeed)
   const dangerRef = useRef(dangerEntries)
   const lineupRef = useRef(lineup)
@@ -726,8 +740,7 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({
   const awaySecondaryRef = useRef(awayColorSecondary)
 
   markersRef.current = markers
-  trailRef.current = possessionTrail
-  isActiveRef.current = isActivePossession
+  ballHistoryRef.current = ballHistory
   matchSpeedRef.current = matchSpeed
   dangerRef.current = dangerEntries
   lineupRef.current = lineup
@@ -772,7 +785,7 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({
         awayPrimaryRef.current, awaySecondaryRef.current)
     }
     if (ov.live) {
-      drawPossessionTrail(ctx, trailRef.current, isActiveRef.current, matchSpeedRef.current, homeTeamRef.current, width, height, PADDING)
+      drawBallHistory(ctx, ballHistoryRef.current, matchSpeedRef.current, homeTeamRef.current, width, height, PADDING)
       drawDangerEntries(ctx, dangerRef.current, homeTeamRef.current, width, height, PADDING)
       drawEvents(ctx, markersRef.current, width, height, PADDING)
     }

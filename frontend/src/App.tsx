@@ -188,14 +188,14 @@ export default function App() {
   const [heatmapTeam,       setHeatmapTeam]       = useState<HeatmapTeam>('home')
   const [heatmapGranularity,setHeatmapGranularity]= useState(4)
   const [personality,       setPersonality]       = useState<Personality>('neutral')
-  const [markers,           setMarkers]           = useState<PitchMarker[]>([])
-  const [activePossession,  setActivePossession]  = useState<PossessionSegment[] | null>(null)
-  const [lastPossession,    setLastPossession]    = useState<PossessionSegment[] | null>(null)
-  const [dangerEntries,     setDangerEntries]     = useState<DangerEntry[]>([])
+  const [markers,       setMarkers]       = useState<PitchMarker[]>([])
+  const [dangerEntries, setDangerEntries] = useState<DangerEntry[]>([])
+  const [ballHistory,   setBallHistory]   = useState<PossessionSegment[]>([])
 
-  const possessionSegmentsRef  = useRef<PossessionSegment[]>([])
-  const possessionTeamRef      = useRef<string | null>(null)
-  const possessionIdRef        = useRef<number>(0)
+  const possessionSegmentsRef = useRef<PossessionSegment[]>([])
+  const possessionTeamRef     = useRef<string | null>(null)
+  const possessionIdRef       = useRef<number>(0)
+  const ballHistoryRef        = useRef<PossessionSegment[]>([])
   const [lineup,            setLineup]            = useState<LineupPlayer[]>([])
   const [heatmapHome,       setHeatmapHome]       = useState<number[][]>(emptyGrid)
   const [heatmapAway,       setHeatmapAway]       = useState<number[][]>(emptyGrid)
@@ -217,7 +217,7 @@ export default function App() {
   } = useWebSocket(selectedMatch)
 
   // ── Audio ─────────────────────────────────────────────────────────────
-  const { activeAgent, isPlaying, handleAudioMessage, setMuted, muted, setOnPlaybackStarted } = useAudioPlayer()
+  const { activeAgent, isPlaying, handleAudioMessage, setMuted, muted, setOnPlaybackStarted, unlockAudio } = useAudioPlayer()
   const [latestCommentary, setLatestCommentary] = useState<AgentCommentary | null>(null)
 
   useEffect(() => { setOnAudioReceived(handleAudioMessage) }, [setOnAudioReceived, handleAudioMessage])
@@ -290,37 +290,55 @@ export default function App() {
       const teamChanged = possessionTeamRef.current !== null && latest.team !== possessionTeamRef.current
 
       if (teamChanged) {
-        if (possessionSegmentsRef.current.length > 0) {
-          setLastPossession([...possessionSegmentsRef.current])
-        }
-        setActivePossession(null)
         possessionSegmentsRef.current = []
         possessionTeamRef.current = null
       }
 
       if (segType && latest.end_position) {
+        // Close out the duration of the previous segment
         const segs = possessionSegmentsRef.current
         if (segs.length > 0) {
-          const prev = segs[segs.length - 1]
-          prev.durationMs = Math.max(150, now - prev.arrivalWallMs)
+          segs[segs.length - 1].durationMs = Math.max(150, now - segs[segs.length - 1].arrivalWallMs)
         }
 
         if (!possessionTeamRef.current) {
+          // New possession — insert a synthetic transition segment bridging the gap
+          const history = ballHistoryRef.current
+          if (history.length > 0) {
+            const lastSeg = history[history.length - 1]
+            const from = lastSeg.to
+            const to = latest.position as [number, number]
+            const dx = to[0] - from[0], dy = to[1] - from[1]
+            const dist = Math.sqrt(dx * dx + dy * dy)
+            // Travel at ~15 SB units/s (realistic transition pace), min 200ms
+            const transitionDur = Math.max(200, (dist / (15 * Math.max(0.25, speed))) * 1000)
+            const transition: PossessionSegment = {
+              from, to,
+              team: latest.team,
+              player: latest.player,
+              type: 'transition',
+              gameTimeSec:   latest.timestamp_sec,
+              arrivalWallMs: now,
+              durationMs:    transitionDur,
+              possessionId:  possessionIdRef.current,
+              segmentIndex:  -1,
+              outOfPlay:     lastSeg.outOfPlay,
+            }
+            ballHistoryRef.current = [...history, transition]
+          }
           possessionIdRef.current += 1
           possessionTeamRef.current = latest.team
         }
 
-        const [fx, fy] = latest.position
-        const [tx, ty] = latest.end_position
-        const dist = Math.sqrt((tx - fx) ** 2 + (ty - fy) ** 2)
         const rawDurationSec = typeof (latest.details as Record<string, unknown>)?.duration === 'number'
           ? (latest.details as Record<string, unknown>).duration as number
           : null
-        // Real-time ms: convert game-seconds to wall-ms, scaled by playback speed.
-        // 0 signals PitchCanvas to fall back to distance-based speed constants.
         const durationMs = rawDurationSec != null
           ? Math.max(60, (rawDurationSec * 1000) / Math.max(0.25, speed))
           : 0
+
+        const det = latest.details as Record<string, unknown>
+        const isOutPass = latest.event_type === 'Pass' && det?.pass_outcome === 'Out'
 
         const seg: PossessionSegment = {
           from: latest.position,
@@ -333,10 +351,17 @@ export default function App() {
           durationMs,
           possessionId:  possessionIdRef.current,
           segmentIndex:  possessionSegmentsRef.current.length,
+          outOfPlay:     isOutPass || undefined,
         }
 
         possessionSegmentsRef.current = [...possessionSegmentsRef.current, seg]
-        setActivePossession([...possessionSegmentsRef.current])
+
+        // Accumulate in ball history, prune entries older than 60s
+        const newHistory = [...ballHistoryRef.current, seg].filter(
+          s => s.arrivalWallMs >= now - 60_000
+        )
+        ballHistoryRef.current = newHistory
+        setBallHistory(newHistory)
       }
 
       if (
@@ -344,8 +369,6 @@ export default function App() {
         latest.team === possessionTeamRef.current &&
         endsPossession(latest.event_type, latest.details)
       ) {
-        setLastPossession([...possessionSegmentsRef.current])
-        setActivePossession(null)
         possessionSegmentsRef.current = []
         possessionTeamRef.current = null
       }
@@ -427,15 +450,15 @@ export default function App() {
   }, [goalEvents])
 
   // ── Handlers ──────────────────────────────────────────────────────────
-  const handlePlay        = useCallback(() => sendAction('play', { speed }), [sendAction, speed])
+  const handlePlay        = useCallback(() => { unlockAudio(); sendAction('play', { speed }) }, [sendAction, speed, unlockAudio])
   const handlePause       = useCallback(() => sendAction('pause'), [sendAction])
   const handleSeek        = useCallback((t: number) => {
     sendAction('seek', { target_time: t })
-    setActivePossession(null)
-    setLastPossession(null)
     possessionSegmentsRef.current = []
     possessionTeamRef.current = null
     possessionIdRef.current += 1
+    ballHistoryRef.current = []
+    setBallHistory([])
     setMarkers([])
     setDangerEntries([])
     setLatestCommentary(null)
@@ -451,9 +474,11 @@ export default function App() {
   }, [])
 
   const handleStart = useCallback((matchId: string, pers: Personality) => {
+    unlockAudio()
     setShowModal(false)
-    setMarkers([]); setActivePossession(null); setLastPossession([]); setDangerEntries([]); setLineup([])
+    setMarkers([]); setBallHistory([]); setDangerEntries([]); setLineup([])
     possessionSegmentsRef.current = []; possessionTeamRef.current = null; possessionIdRef.current = 0
+    ballHistoryRef.current = []
     setHeatmapHome(emptyGrid()); setHeatmapAway(emptyGrid())
     setActivityBuckets([]); setGoalMarkers([])
     setOverlays({ live: true, formation: false, heatmap: false, shotmap: false, vectors: false })
@@ -476,7 +501,7 @@ export default function App() {
       })
       .catch(() => {})
       .finally(() => setSummaryLoading(false))
-  }, [])
+  }, [unlockAudio])
 
   return (
     <div
@@ -563,8 +588,7 @@ export default function App() {
               <>
                 <PitchCanvas
                   markers={markers}
-                  possessionTrail={activePossession ?? lastPossession ?? []}
-                  isActivePossession={activePossession !== null}
+                  ballHistory={ballHistory}
                   matchSpeed={speed}
                   dangerEntries={dangerEntries}
                   homeTeam={homeTeam}

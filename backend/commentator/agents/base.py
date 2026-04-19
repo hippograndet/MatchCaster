@@ -147,7 +147,8 @@ class BaseAgent(ABC):
         if not events:
             return ""
         ev = events[0]
-        loc = coords_to_description(*ev.position)
+        direction = "left_to_right" if ev.is_home else "right_to_left"
+        loc = coords_to_description(*ev.position, attacking_direction=direction)
         if ev.event_type == "Shot":
             outcome = ev.details.get("shot_outcome", "")
             if outcome == "Goal":
@@ -186,11 +187,12 @@ def _events_to_text(events: list[MatchEvent]) -> str:
     """Convert a list of events to a human-readable string for prompts."""
     lines = []
     for ev in events:
-        loc = coords_to_description(*ev.position)
+        direction = "left_to_right" if ev.is_home else "right_to_left"
+        loc = coords_to_description(*ev.position, attacking_direction=direction)
         display_type = _EVENT_TYPE_DISPLAY.get(ev.event_type, ev.event_type)
         line = f"[{display_type}] {ev.player} ({ev.team}) — {loc}"
         if ev.end_position:
-            end_loc = coords_to_description(*ev.end_position)
+            end_loc = coords_to_description(*ev.end_position, attacking_direction=direction)
             line += f" → {end_loc}"
         # Add key details
         extras = []
