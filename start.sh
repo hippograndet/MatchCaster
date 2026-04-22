@@ -3,6 +3,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------------------------------------------------------------------------
+# Python virtual environment (.venv)
+# ---------------------------------------------------------------------------
+VENV_DIR="$ROOT/.venv"
+if [[ ! -d "$VENV_DIR" ]]; then
+  echo "Creating Python virtual environment in .venv ..."
+  python3 -m venv "$VENV_DIR"
+  source "$VENV_DIR/bin/activate"
+  python -m pip install --upgrade pip
+  python -m pip install -r "$ROOT/backend/requirements.txt"
+else
+  source "$VENV_DIR/bin/activate"
+fi
+
+PY_VER="$(python --version 2>&1)"
+
+# ---------------------------------------------------------------------------
 # Parse backend argument: ./start.sh [groq|local]  (default: groq)
 # ---------------------------------------------------------------------------
 BACKEND="${1:-groq}"
@@ -29,6 +45,7 @@ echo "║         M A T C H C A S T E R        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 echo "  Mode     →  $MODE_LABEL"
+echo "  Python   →  $PY_VER (.venv)"
 echo "  Backend  →  http://localhost:8000"
 echo "  Frontend →  http://localhost:5173"
 echo ""
@@ -68,7 +85,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Start backend
 # ---------------------------------------------------------------------------
-(cd "$ROOT/backend" && python3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000 2>&1 \
+(cd "$ROOT/backend" && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000 2>&1 \
   | while IFS= read -r line; do
       case "$line" in
         *"Will watch for changes"*|*"Started reloader process"*|\

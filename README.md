@@ -1,4 +1,4 @@
-# MatchCaster — AI Football Commentary Engine
+# MatchCaster
 
 A multi-agent AI football commentary system. Replays real StatsBomb match data with live synthesized audio commentary from two AI commentators, displayed on an interactive pitch visualizer.
 
@@ -11,148 +11,62 @@ StatsBomb JSON → Replay Engine → Director (look-ahead batch) → LLM (Groq A
 
 ---
 
-## LLM Backend
+## Quick Start
 
-MatchCaster supports two commentary backends, selected at startup:
+### 1) Prerequisites
+- Python 3.11+
+- Node.js 18+
 
-### Cloud — Groq API (default, recommended)
+Optional:
+- Groq API key (default cloud mode)
+- Ollama (for fully local mode)
 
-Fast cloud inference (~400 tok/s). Free tier available. Requires an internet connection.
+### 2) Install dependencies (standard workflow)
 
 ```bash
-# 1. Get a free API key at https://console.groq.com
-export GROQ_API_KEY=...
+# from repo root
+python3 -m venv .venv
+source .venv/bin/activate
 
-# 2. Start (Groq is the default)
-./start.sh
-# or explicitly:
-./start.sh groq
+python -m pip install --upgrade pip
+python -m pip install -r backend/requirements.txt
+
+cd frontend && npm install && cd ..
+cd data && bash setup.sh && cd ..
 ```
 
-> Commentary blocks generate in ~2 seconds with Groq. No model download required.
-
-### Local — Ollama (offline)
-
-Runs entirely on your machine. Requires a capable CPU/GPU. Slower on older Intel Macs (~20–30 s per block).
+### 3) Run
 
 ```bash
-# 1. Install Ollama
-brew install ollama
+# Cloud mode (default)
+export GROQ_API_KEY=your_key_here
+./start.sh
 
-# 2. Pull the model
-ollama pull gemma2:2b-instruct-q4_K_M
-
-# 3. Start in local mode
+# Local mode (offline)
+# brew install ollama
+# ollama pull gemma2:2b-instruct-q4_K_M
 ./start.sh local
 ```
 
-> Note: On Intel Macs (no Metal/GPU), generation may lag behind real-time play at 1× speed. Use 0.5× speed or lower for smooth commentary.
+Open http://localhost:5173
 
 ---
 
-## Prerequisites
-
-| Dependency | Version | Install |
-|---|---|---|
-| Python | 3.11+ | [python.org](https://python.org) |
-| Node.js | 18+ | [nodejs.org](https://nodejs.org) |
-| Ollama | latest | `brew install ollama` — only required for `./start.sh local` |
-| Piper TTS | 2023.11.14-2 | Standalone bundle — see Step 3 |
-
----
-
-## Setup (one-time)
-
-### 1. Choose your LLM backend
-
-See the [LLM Backend](#llm-backend) section above. For the quickest setup, use Groq (cloud) — just export your key and skip Ollama entirely.
-
-### 2. Download match data
+## Commands
 
 ```bash
-cd data
-bash setup.sh
-cd ..
-```
-
-Clones StatsBomb's open-data repository and copies match files into `data/matches/` and `data/lineups/`.
-
-### 3. Download Kokoro TTS model files (optional — for higher-quality audio commentary)
-
-> Without Kokoro, MatchCaster falls back to the macOS built-in `say` command automatically. Commentary still plays — just with system voices. Skip to Step 4 if you want to get started quickly.
-
-MatchCaster uses **kokoro-onnx** for neural TTS (installed automatically via `pip install -r requirements.txt` in Step 4). It works on Python 3.13 and requires no binary — just two model files to download:
-
-```bash
-mkdir -p ~/.local/share/kokoro
-cd ~/.local/share/kokoro
-
-curl -L -o kokoro-v1.0.onnx \
-  "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
-
-curl -L -o voices-v1.0.bin \
-  "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
-```
-
-| Voice | Agent | Character |
-|---|---|---|
-| `am_adam` | Play-by-play | American male, energetic |
-| `bm_george` | Analyst | British male, measured |
-
-#### Verify:
-
-```bash
-python3 -c "
-from kokoro_onnx import Kokoro
-import subprocess, wave, io, numpy as np
-k = Kokoro(
-    model_path='$HOME/.local/share/kokoro/kokoro-v1.0.onnx',
-    voices_path='$HOME/.local/share/kokoro/voices-v1.0.bin',
-)
-samples, sr = k.create('And we are off!', voice='am_adam', speed=1.1, lang='en-us')
-pcm = (np.clip(samples, -1, 1) * 32767).astype(np.int16)
-buf = io.BytesIO()
-with wave.open(buf, 'wb') as wf:
-    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sr); wf.writeframes(pcm.tobytes())
-subprocess.run(['afplay', '-'], input=buf.getvalue())
-print('Kokoro OK')
-"
-```
-
-### 4. Install dependencies
-
-```bash
-# Backend
-cd backend && pip install -r requirements.txt && cd ..
-
-# Frontend
-cd frontend && npm install && cd ..
+./start.sh          # cloud (groq, default)
+./start.sh groq     # explicit cloud
+./start.sh local    # local ollama
 ```
 
 ---
 
-## Running the app
+### Notes
 
-```bash
-./start.sh          # Groq cloud (default) — requires GROQ_API_KEY
-./start.sh groq     # same as above, explicit
-./start.sh local    # Ollama offline — requires model pulled
-```
-
-Starts both the backend (port 8000) and frontend (port 5173). Press `Ctrl+C` to stop.
-
-Open **[http://localhost:5173](http://localhost:5173)** in your browser.
-
-> Run separately if preferred:
-> ```bash
-> # Terminal 1
-> cd backend && python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
->
-> # Terminal 2
-> cd frontend && npm run dev
-> ```
-
----
+- Backend deps: `backend/requirements.txt` (Python / pip)
+- Frontend deps: `frontend/package.json` (Node / npm)
+- `start.sh` can auto-create `.venv`, but explicit venv setup above is the standard manual flow.
 
 ## Using the app
 
