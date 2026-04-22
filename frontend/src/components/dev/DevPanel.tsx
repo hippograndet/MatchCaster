@@ -5,7 +5,7 @@
 // Also includes prompt override controls and a config viewer.
 
 import { useState, useEffect, useRef } from 'react'
-import type { PipelineTrace } from '../utils/types'
+import type { PipelineTrace } from '../../utils/types'
 
 // ---------------------------------------------------------------------------
 // Constants

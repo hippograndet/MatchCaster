@@ -2,7 +2,7 @@
 // Tabbed right sidebar: compact score header + Stats | Live | Squad
 
 import React, { useEffect, useRef, useState } from 'react'
-import type { MatchState, MatchEventData, MatchAnalysis, LineupPlayer, GoalEvent, MatchMeta } from '../utils/types'
+import type { MatchState, MatchEventData, MatchAnalysis, LineupPlayer, GoalEvent, MatchMeta } from '../../utils/types'
 
 type Tab = 'stats' | 'live' | 'squad'
 

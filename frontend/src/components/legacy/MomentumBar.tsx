@@ -2,7 +2,7 @@
 // Real-time momentum indicator driven by backend pattern analysis.
 
 import React from 'react'
-import type { MatchAnalysis } from '../utils/types'
+import type { MatchAnalysis } from '../../utils/types'
 
 interface MomentumBarProps {
   homeTeam: string

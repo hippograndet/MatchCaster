@@ -2,7 +2,7 @@
 // SofaScore-inspired match header: teams, score, status, goal scorers, meta
 
 import React from 'react'
-import type { GoalEvent, MatchMeta } from '../utils/types'
+import type { GoalEvent, MatchMeta } from '../../utils/types'
 
 interface MatchHeaderProps {
   homeTeam: string

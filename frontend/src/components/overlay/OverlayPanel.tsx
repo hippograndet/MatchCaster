@@ -2,7 +2,7 @@
 // Floating panel for pitch overlay settings — each overlay independently toggleable
 
 import React, { useEffect, useRef } from 'react'
-import type { PitchOverlays, HeatmapTeam, Personality } from '../utils/types'
+import type { PitchOverlays, HeatmapTeam, Personality } from '../../utils/types'
 
 interface OverlayPanelProps {
   isOpen: boolean

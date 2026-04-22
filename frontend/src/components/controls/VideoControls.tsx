@@ -2,7 +2,7 @@
 // Video-player-style match controls: activity waveform seek bar, ±10/30s, speed, mute
 
 import React, { useRef, useCallback, useMemo } from 'react'
-import type { ActivityBucket, GoalMarker, PitchOverlays } from '../utils/types'
+import type { ActivityBucket, GoalMarker, PitchOverlays } from '../../utils/types'
 
 interface VideoControlsProps {
   running: boolean

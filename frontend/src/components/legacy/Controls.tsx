@@ -1,7 +1,7 @@
 // frontend/src/components/Controls.tsx
 
 import React, { useEffect, useState } from 'react'
-import type { MatchInfo, Personality, PitchView, HeatmapTeam } from '../utils/types'
+import type { MatchInfo, Personality, PitchView, HeatmapTeam } from '../../utils/types'
 
 interface ControlsProps {
   running: boolean

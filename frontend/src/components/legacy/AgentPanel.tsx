@@ -2,8 +2,8 @@
 // Shows which agent is speaking, last utterance text, with glow on active.
 
 import React, { useEffect, useState } from 'react'
-import type { AgentName } from '../utils/types'
-import type { AgentCommentary } from '../hooks/useWebSocket'
+import type { AgentName } from '../../utils/types'
+import type { AgentCommentary } from '../../hooks/useWebSocket'
 
 interface AgentPanelProps {
   commentaries: Record<AgentName, AgentCommentary | null>

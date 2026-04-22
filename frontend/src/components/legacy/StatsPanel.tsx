@@ -2,7 +2,7 @@
 // SofaScore-style mirrored stat bars
 
 import React from 'react'
-import type { MatchState } from '../utils/types'
+import type { MatchState } from '../../utils/types'
 
 interface StatsPanelProps {
   matchState: MatchState | null

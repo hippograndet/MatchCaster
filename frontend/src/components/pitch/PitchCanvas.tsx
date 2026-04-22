@@ -2,8 +2,8 @@
 // Animated pitch: event markers, chem-trail passes, formation overlay, heatmap
 
 import React, { useRef, useEffect, useCallback } from 'react'
-import { drawPitch, sbToCanvas } from '../utils/pitchCoords'
-import type { PitchMarker, PitchOverlays, HeatmapTeam, LineupPlayer, ShotData, BuildUpZone } from '../utils/types'
+import { drawPitch, sbToCanvas } from '../../utils/pitchCoords'
+import type { PitchMarker, PitchOverlays, HeatmapTeam, LineupPlayer, ShotData, BuildUpZone } from '../../utils/types'
 
 export interface PossessionSegment {
   from: [number, number]

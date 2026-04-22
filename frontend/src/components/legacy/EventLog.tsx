@@ -2,7 +2,7 @@
 // Tabbed event log: Key Events | All Events
 
 import React, { useEffect, useRef, useState } from 'react'
-import type { MatchEventData } from '../utils/types'
+import type { MatchEventData } from '../../utils/types'
 
 interface EventLogProps {
   events: MatchEventData[]

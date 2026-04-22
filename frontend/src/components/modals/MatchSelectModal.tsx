@@ -2,7 +2,7 @@
 // Full-screen launch screen: match selection + commentary style
 
 import React, { useEffect, useState } from 'react'
-import type { MatchInfo, Personality } from '../utils/types'
+import type { MatchInfo, Personality } from '../../utils/types'
 
 interface MatchSelectModalProps {
   onStart: (matchId: string, personality: Personality) => void

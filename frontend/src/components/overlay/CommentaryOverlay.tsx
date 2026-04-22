@@ -2,8 +2,8 @@
 // Glass-morphism commentary bar overlaid at the bottom of the pitch.
 
 import React, { useState, useEffect } from 'react'
-import type { AgentName } from '../utils/types'
-import type { AgentCommentary } from '../hooks/useWebSocket'
+import type { AgentName } from '../../utils/types'
+import type { AgentCommentary } from '../../hooks/useWebSocket'
 
 interface CommentaryOverlayProps {
   latestCommentary: AgentCommentary | null
