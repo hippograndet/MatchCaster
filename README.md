@@ -21,7 +21,7 @@ Fast cloud inference (~400 tok/s). Free tier available. Requires an internet con
 
 ```bash
 # 1. Get a free API key at https://console.groq.com
-export GROQ_API_KEY=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
+export GROQ_API_KEY=...
 
 # 2. Start (Groq is the default)
 ./start.sh

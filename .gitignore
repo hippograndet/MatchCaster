@@ -1,0 +1,9 @@
+# Claude Code Local Files
+.claude/*
+CLAUDE.local.md
+docs/*
+*.DS_Store
+
+# For Public (Not if shared private repo)
+CLAUDE.md
+.claudeignore
