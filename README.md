@@ -2,12 +2,20 @@
 
 A multi-agent AI football commentary system. Replays real StatsBomb match data with live synthesized audio commentary from two AI commentators, displayed on an interactive pitch visualizer.
 
+```mermaid
+flowchart LR
+    A[📦 Match data<br/>StatsBomb JSON] --> B[⏱ Replay Engine<br/>Replays events in timeline order]
+    B --> C[🧠 Match Analysis<br/>Tracks score, momentum, context]
+    C --> D[🎬 Director<br/>Plans next commentary lines in advance]
+    D --> E[🤖 AI Commentators<br/>Play-by-Play + Analyst]
+    E --> F[🔊 Speech Engine<br/>Converts text to audio]
+    B --> G[📡 Live Event Stream]
+    F --> H[🖥 Frontend App
+Pitch + timeline + controls]
+    G --> H
 ```
-StatsBomb JSON → Replay Engine → Director (look-ahead batch) → LLM (Groq API or Ollama)
-                                                              → Kokoro/Piper TTS
-                               → Analysis Engine
-                               → WebSocket → React Frontend
-```
+
+**In plain words:** MatchCaster reads a real match file, "replays" the game second by second, prepares commentary slightly ahead of time, converts it to audio, and sends both visuals + sound to the live interface.
 
 ---
 
@@ -107,6 +115,58 @@ Open http://localhost:5173
 ## Architecture
 
 ### Commentary System
+
+### System Overview (non-technical)
+
+Think of MatchCaster like a live TV production team:
+
+- **Replay Engine** = the control room replaying the match timeline
+- **Director** = decides *when* each commentator should speak
+- **AI Commentators** = the voices (live action + deeper analysis)
+- **Speech Engine** = turns scripts into spoken audio
+- **Frontend** = what the viewer sees and hears in real time
+
+### Technical Flow
+
+```mermaid
+flowchart TD
+    subgraph Data
+        M[StatsBomb Match JSON]
+    end
+
+    subgraph Backend
+        P[player.loader + player.emitter]
+        A[analyser.engine + state + classifier]
+        D[director.router]
+        C[commentator.agents]
+        L[commentator.llm
+Groq or Ollama]
+        T[commentator.tts.engine
+Piper / macOS say fallback]
+        Q[commentator.queue
+Event-tagged audio]
+        W[ws.handler]
+    end
+
+    subgraph Frontend
+        F[React UI
+Pitch + overlays + controls]
+    end
+
+    M --> P
+    P --> A
+    P --> D
+    A --> D
+    D --> C
+    C --> L
+    L --> C
+    C --> T
+    T --> Q
+    P --> W
+    A --> W
+    Q --> W
+    W --> F
+```
 
 MatchCaster uses a two-commentator look-ahead batch system:
 
