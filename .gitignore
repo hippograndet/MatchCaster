@@ -1,5 +1,5 @@
 # Claude Code Local Files
-.claude/*
+.claude/
 CLAUDE.local.md
 docs/*
 *.DS_Store
