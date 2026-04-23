@@ -11,12 +11,18 @@ CLAUDE.md
 # Python
 .venv/
 __pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
 pip-log.txt
 pip-delete-this-directory.txt
+.pytest_cache/
+
+# Debug outputs
+backend/debug/snapshots/*
+!backend/debug/snapshots/.gitkeep
 
 # Node
 node_modules/
