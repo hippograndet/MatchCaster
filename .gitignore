@@ -1,5 +1,5 @@
 # Claude Code Local Files
-.claude/*
+.claude/
 CLAUDE.local.md
 docs/*
 *.DS_Store
@@ -7,3 +7,41 @@ docs/*
 # For Public (Not if shared private repo)
 CLAUDE.md
 .claudeignore
+
+# Python
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+
+# Debug outputs
+backend/debug/snapshots/*
+!backend/debug/snapshots/.gitkeep
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build
+dist/
+build/
+*.egg-info/

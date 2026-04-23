@@ -2,12 +2,20 @@
 
 A multi-agent AI football commentary system. Replays real StatsBomb match data with live synthesized audio commentary from two AI commentators, displayed on an interactive pitch visualizer.
 
+```mermaid
+flowchart LR
+    A[📦 Match data<br/>StatsBomb JSON] --> B[⏱ Replay Engine<br/>Replays events in timeline order]
+    B --> C[🧠 Match Analysis<br/>Tracks score, momentum, context]
+    C --> D[🎬 Director<br/>Plans next commentary lines in advance]
+    D --> E[🤖 AI Commentators<br/>Play-by-Play + Analyst]
+    E --> F[🔊 Speech Engine<br/>Converts text to audio]
+    B --> G[📡 Live Event Stream]
+    F --> H[🖥 Frontend App
+Pitch + timeline + controls]
+    G --> H
 ```
-StatsBomb JSON → Replay Engine → Director (look-ahead batch) → LLM (Groq API or Ollama)
-                                                              → Kokoro/Piper TTS
-                               → Analysis Engine
-                               → WebSocket → React Frontend
-```
+
+**In plain words:** MatchCaster reads a real match file, "replays" the game second by second, prepares commentary slightly ahead of time, converts it to audio, and sends both visuals + sound to the live interface.
 
 ---
 
@@ -16,36 +24,36 @@ StatsBomb JSON → Replay Engine → Director (look-ahead batch) → LLM (Groq A
 ### 1) Prerequisites
 - Python 3.11+
 - Node.js 18+
+- `make` (pre-installed on macOS/Linux, or install via WSL on Windows)
 
 Optional:
 - Groq API key (default cloud mode)
 - Ollama (for fully local mode)
 
-### 2) Install dependencies (standard workflow)
+### 2) Install dependencies
 
 ```bash
 # from repo root
-python3 -m venv .venv
-source .venv/bin/activate
-
-python -m pip install --upgrade pip
-python -m pip install -r backend/requirements.txt
-
-cd frontend && npm install && cd ..
-cd data && bash setup.sh && cd ..
+make setup
 ```
+
+This will:
+- Create a Python virtual environment (`.venv`)
+- Install Python dependencies from `backend/requirements.txt`
+- Install frontend dependencies from `frontend/package.json`
+- Download match data from StatsBomb open-data
 
 ### 3) Run
 
 ```bash
 # Cloud mode (default)
 export GROQ_API_KEY=your_key_here
-./start.sh
+make run
 
 # Local mode (offline)
 # brew install ollama
 # ollama pull gemma2:2b-instruct-q4_K_M
-./start.sh local
+make run-local
 ```
 
 Open http://localhost:5173
@@ -53,6 +61,26 @@ Open http://localhost:5173
 ---
 
 ## Commands
+
+| Command | Description |
+|---------|-------------|
+| `make help` | Show all available commands |
+| `make setup` | Full setup (venv, deps, data) |
+| `make install` | Install dependencies only |
+| `make data` | Download match data |
+| `make run` | Run in cloud mode (Groq, default) |
+| `make run-cloud` | Same as `make run` |
+| `make run-local` | Run in local mode (Ollama) |
+| `make dev-backend` | Run only backend with live reload |
+| `make dev-frontend` | Run only frontend dev server |
+| `make clean` | Remove venv and cleanup |
+| `make stop` | Stop all running processes |
+| `make test` | Run test suite |
+| `make verify` | Verify setup is complete |
+
+### Legacy start.sh
+
+The original `start.sh` script is still available for backward compatibility:
 
 ```bash
 ./start.sh          # cloud (groq, default)
@@ -66,7 +94,8 @@ Open http://localhost:5173
 
 - Backend deps: `backend/requirements.txt` (Python / pip)
 - Frontend deps: `frontend/package.json` (Node / npm)
-- `start.sh` can auto-create `.venv`, but explicit venv setup above is the standard manual flow.
+- The Makefile automatically handles virtual environment creation and dependency installation
+- Run `make verify` to check if your setup is complete
 
 ## Using the app
 
@@ -107,6 +136,58 @@ Open http://localhost:5173
 ## Architecture
 
 ### Commentary System
+
+### System Overview (non-technical)
+
+Think of MatchCaster like a live TV production team:
+
+- **Replay Engine** = the control room replaying the match timeline
+- **Director** = decides *when* each commentator should speak
+- **AI Commentators** = the voices (live action + deeper analysis)
+- **Speech Engine** = turns scripts into spoken audio
+- **Frontend** = what the viewer sees and hears in real time
+
+### Technical Flow
+
+```mermaid
+flowchart TD
+    subgraph Data
+        M[StatsBomb Match JSON]
+    end
+
+    subgraph Backend
+        P[player.loader + player.emitter]
+        A[analyser.engine + state + classifier]
+        D[director.router]
+        C[commentator.agents]
+        L[commentator.llm
+Groq or Ollama]
+        T[commentator.tts.engine
+Piper / macOS say fallback]
+        Q[commentator.queue
+Event-tagged audio]
+        W[ws.handler]
+    end
+
+    subgraph Frontend
+        F[React UI
+Pitch + overlays + controls]
+    end
+
+    M --> P
+    P --> A
+    P --> D
+    A --> D
+    D --> C
+    C --> L
+    L --> C
+    C --> T
+    T --> Q
+    P --> W
+    A --> W
+    Q --> W
+    W --> F
+```
 
 MatchCaster uses a two-commentator look-ahead batch system:
 
