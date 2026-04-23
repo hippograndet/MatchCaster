@@ -24,36 +24,36 @@ Pitch + timeline + controls]
 ### 1) Prerequisites
 - Python 3.11+
 - Node.js 18+
+- `make` (pre-installed on macOS/Linux, or install via WSL on Windows)
 
 Optional:
 - Groq API key (default cloud mode)
 - Ollama (for fully local mode)
 
-### 2) Install dependencies (standard workflow)
+### 2) Install dependencies
 
 ```bash
 # from repo root
-python3 -m venv .venv
-source .venv/bin/activate
-
-python -m pip install --upgrade pip
-python -m pip install -r backend/requirements.txt
-
-cd frontend && npm install && cd ..
-cd data && bash setup.sh && cd ..
+make setup
 ```
+
+This will:
+- Create a Python virtual environment (`.venv`)
+- Install Python dependencies from `backend/requirements.txt`
+- Install frontend dependencies from `frontend/package.json`
+- Download match data from StatsBomb open-data
 
 ### 3) Run
 
 ```bash
 # Cloud mode (default)
 export GROQ_API_KEY=your_key_here
-./start.sh
+make run
 
 # Local mode (offline)
 # brew install ollama
 # ollama pull gemma2:2b-instruct-q4_K_M
-./start.sh local
+make run-local
 ```
 
 Open http://localhost:5173
@@ -61,6 +61,26 @@ Open http://localhost:5173
 ---
 
 ## Commands
+
+| Command | Description |
+|---------|-------------|
+| `make help` | Show all available commands |
+| `make setup` | Full setup (venv, deps, data) |
+| `make install` | Install dependencies only |
+| `make data` | Download match data |
+| `make run` | Run in cloud mode (Groq, default) |
+| `make run-cloud` | Same as `make run` |
+| `make run-local` | Run in local mode (Ollama) |
+| `make dev-backend` | Run only backend with live reload |
+| `make dev-frontend` | Run only frontend dev server |
+| `make clean` | Remove venv and cleanup |
+| `make stop` | Stop all running processes |
+| `make test` | Run test suite |
+| `make verify` | Verify setup is complete |
+
+### Legacy start.sh
+
+The original `start.sh` script is still available for backward compatibility:
 
 ```bash
 ./start.sh          # cloud (groq, default)
@@ -74,7 +94,8 @@ Open http://localhost:5173
 
 - Backend deps: `backend/requirements.txt` (Python / pip)
 - Frontend deps: `frontend/package.json` (Node / npm)
-- `start.sh` can auto-create `.venv`, but explicit venv setup above is the standard manual flow.
+- The Makefile automatically handles virtual environment creation and dependency installation
+- Run `make verify` to check if your setup is complete
 
 ## Using the app
 
