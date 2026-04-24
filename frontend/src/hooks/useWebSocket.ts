@@ -36,8 +36,11 @@ export interface UseWebSocketReturn {
   matchTime: number
   displayTime: number
   speed: number
+  effectiveSpeed: number
   running: boolean
   matchEnded: boolean
+  isLoading: boolean
+  loadingReason: string | null
   currentPeriod: number
   recentEvents: MatchEventData[]
   agentCommentaries: Record<AgentName, AgentCommentary | null>
@@ -66,7 +69,10 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
   const [matchTime, setMatchTime] = useState(0)
   const [displayTime, setDisplayTime] = useState(0)
   const [speed, setSpeed] = useState(1)
+  const [effectiveSpeed, setEffectiveSpeed] = useState(1)
   const [running, setRunning] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadingReason, setLoadingReason] = useState<string | null>(null)
   const [matchEnded, setMatchEnded] = useState(false)
   const [currentPeriod, setCurrentPeriod] = useState(1)
   const [recentEvents, setRecentEvents] = useState<MatchEventData[]>([])
@@ -113,6 +119,7 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
         setMatchTime(msg.match_time)
         setDisplayTime(msg.match_time)
         setSpeed(msg.speed)
+        if (msg.effective_speed !== undefined) setEffectiveSpeed(msg.effective_speed)
         setRunning(msg.running)
         if (msg.state) setMatchState(msg.state)
         if (msg.analysis) setAnalysis(msg.analysis)
@@ -161,8 +168,20 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
         setRunning(false)
         break
 
+      case 'loading':
+        setIsLoading(true)
+        setLoadingReason(msg.reason ?? null)
+        break
+
+      case 'ready':
+        setIsLoading(false)
+        setLoadingReason(null)
+        break
+
       case 'tts_ready':
         setTtsReady(true)
+        setIsLoading(false)
+        setLoadingReason(null)
         break
 
       case 'backend_status':
@@ -212,6 +231,9 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     setBackendInfo(null)
     setAnalysis(null)
     setAgentCommentaries({ play_by_play: null, tactical: null, stats: null })
+    setIsLoading(true)
+    setLoadingReason(null)
+    setEffectiveSpeed(1)
     if (matchId) connect()
     return () => {
       mountedRef.current = false
@@ -225,10 +247,10 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
   useEffect(() => {
     if (!running) return
     const id = setInterval(() => {
-      setDisplayTime(t => t + 0.1 * speed)
+      setDisplayTime(t => t + 0.1 * effectiveSpeed)
     }, 100)
     return () => clearInterval(id)
-  }, [running, speed, matchTime])
+  }, [running, effectiveSpeed, matchTime])
 
   const sendAction = useCallback(
     (action: string, extra?: Record<string, unknown>) => {
@@ -245,7 +267,10 @@ export function useWebSocket(matchId: string | null): UseWebSocketReturn {
     matchTime,
     displayTime,
     speed,
+    effectiveSpeed,
     running,
+    isLoading,
+    loadingReason,
     matchEnded,
     currentPeriod,
     recentEvents,

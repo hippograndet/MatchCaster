@@ -13,12 +13,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from commentator.queue import AudioQueue, EventTaggedQueue
 from director.router import Director
 from analyser.state import SharedMatchState
-from player.emitter import get_or_create_session, ReplaySession
+from player.emitter import get_or_create_session, ReplaySession, remove_session
 from player.loader import load_events, list_available_matches, compute_snapshots
 from analyser.engine import MatchAnalysisEngine
 from analyser.enrichment.match_meta import get_match_meta
 from analyser.enrichment.weather import fetch_weather
 from analyser.enrichment.team_colors import get_team_colors
+from config import LOADING_MIN_BLOCKS_READY
 
 logger = logging.getLogger("[WS]")
 
@@ -39,7 +40,6 @@ class MatchSession:
             audio_queue=self.audio_queue,
             event_tagged_queue=self.event_tagged_queue,
             broadcast_cb=self._broadcast,
-            speed_cb=self._on_speed_override,
         )
 
         self.replay_session = get_or_create_session(match_id)
@@ -72,6 +72,8 @@ class MatchSession:
 
         self._snapshots: list[dict] = []   # populated lazily on first seek
         self._warmup_started: bool = False
+        self._is_loading: bool = False
+        self._loading_wait_task: Optional[asyncio.Task] = None
 
         # Give the director all events immediately (don't wait for async enrichment)
         self.director.set_all_events(self.replay_session.events)
@@ -247,6 +249,9 @@ class MatchSession:
         from commentator.llm import get_backend
         from config import LLM_BACKEND
 
+        # Signal loading to any already-connected clients
+        await self._broadcast_loading("startup")
+
         # Broadcast which backend is active so the frontend can show the badge
         backend = get_backend()
         await self._broadcast({
@@ -275,6 +280,7 @@ class MatchSession:
             logger.warning("Preload wait timed out — enabling play anyway")
             self.director._preload_done.set()
         await self._broadcast({"type": "tts_ready"})
+        await self._broadcast_ready()
         logger.info("All systems ready — play enabled")
 
     def _ensure_snapshots(self) -> None:
@@ -328,6 +334,40 @@ class MatchSession:
             f"(+{len(events_in_range)} events) score={self.state.score}"
         )
 
+    # ------------------------------------------------------------------
+    # Loading state helpers
+    # ------------------------------------------------------------------
+
+    async def _broadcast_loading(self, reason: str) -> None:
+        self._is_loading = True
+        await self._broadcast({"type": "loading", "reason": reason})
+        logger.info(f"Loading state: {reason}")
+
+    async def _broadcast_ready(self) -> None:
+        self._is_loading = False
+        await self._broadcast({"type": "ready"})
+        logger.info("Loading complete — ready")
+
+    async def _await_ready_after_seek(self) -> None:
+        """Poll until director has at least one block ready, then broadcast ready."""
+        while True:
+            await asyncio.sleep(0.2)
+            if (
+                self.director._preload_done.is_set()
+                and self.director.time_block_queue.pending_count >= 1
+            ):
+                self.director.on_loading_end()
+                await self._broadcast_ready()
+                return
+
+    async def _await_ready_after_speed(self) -> None:
+        """Poll until commentary buffer is replenished, then broadcast ready."""
+        while True:
+            await asyncio.sleep(0.2)
+            if self.director.time_block_queue.pending_count >= LOADING_MIN_BLOCKS_READY:
+                await self._broadcast_ready()
+                return
+
     def stop(self) -> None:
         self.director.stop()
         for t in (self._audio_pump_task, self._clock_broadcast_task, self._event_consumer_task):
@@ -348,15 +388,18 @@ class MatchSession:
                 "clock": {
                     "match_time": self.replay_session.clock.get_time(),
                     "speed": self.replay_session.clock.speed,
+                    "effective_speed": self.replay_session.clock.effective_speed,
                     "running": self.replay_session.clock.is_running,
                 },
                 "match_id": self.match_id,
                 "nickname_map": self._nickname_map,
             }
-            # Only include match_meta once it has been loaded (avoid empty dict overwriting null)
             if self._match_meta:
                 msg["match_meta"] = self._match_meta
             await ws.send_text(json.dumps(msg))
+            # If we're mid-loading, immediately inform the new client
+            if self._is_loading:
+                await ws.send_text(json.dumps({"type": "loading", "reason": "startup"}))
         except Exception:
             pass
 
@@ -392,8 +435,18 @@ class MatchSession:
 
         elif action == "set_speed":
             speed = float(msg.get("speed", 5))
+            old_speed = self.replay_session.clock.base_speed
             self.director.set_base_speed(speed)
             self.replay_session.clock.set_speed(speed)
+            # Any speed increase with a thin buffer triggers a loading state
+            is_increase = speed > old_speed
+            if is_increase and self.director.time_block_queue.pending_count < LOADING_MIN_BLOCKS_READY:
+                if self._loading_wait_task:
+                    self._loading_wait_task.cancel()
+                await self._broadcast_loading("speed_increase")
+                self._loading_wait_task = asyncio.get_event_loop().create_task(
+                    self._await_ready_after_speed()
+                )
 
         elif action == "set_personality":
             self.director.set_personality(msg.get("personality", "neutral"))
@@ -417,9 +470,13 @@ class MatchSession:
             target = max(0.0, float(msg.get("target_time", 0)))
             if not self.replay_session.clock._paused:
                 self.replay_session.clock.pause()
+
+            # Pause director and signal loading before any seek work begins
+            self.director.on_loading_start("seek")
+            await self._broadcast_loading("seek")
+
+            # Seek: binary search reposition + queue flush (Phase 2)
             self.replay_session.seek(target)
-            if not self.director.is_paused:
-                self.director.set_paused(True)
 
             # Flush stale audio and pre-generated commentary, reset batch pointer
             self.audio_queue.clear()
@@ -431,6 +488,7 @@ class MatchSession:
 
             # Restore cumulative stats (score, totals) and rebuild analysis context
             self._restore_stats_at(target)
+
             # Broadcast updated state immediately so the frontend sees the
             # correct score/stats before the next clock tick
             await self._broadcast({
@@ -439,10 +497,18 @@ class MatchSession:
                 "clock": {
                     "match_time": target,
                     "speed": self.replay_session.clock.speed,
+                    "effective_speed": self.replay_session.clock.effective_speed,
                     "running": False,
                 },
                 "match_id": self.match_id,
             })
+
+            # Spawn background task: broadcast ready once first block is generated
+            if self._loading_wait_task:
+                self._loading_wait_task.cancel()
+            self._loading_wait_task = asyncio.get_event_loop().create_task(
+                self._await_ready_after_seek()
+            )
 
         elif action == "reset":
             self.replay_session.clock.stop()
@@ -463,25 +529,21 @@ class MatchSession:
             "type": "clock",
             "match_time": self.replay_session.clock.get_time(),
             "speed": self.replay_session.clock.speed,
+            "effective_speed": self.replay_session.clock.effective_speed,
             "running": self.replay_session.clock.is_running,
         })
 
-    # ------------------------------------------------------------------
-    # Speed callback from director (dynamic speed)
-    # ------------------------------------------------------------------
-
-    def _on_speed_override(self, speed: float) -> None:
-        self.replay_session.clock.set_speed(speed)
-        asyncio.get_event_loop().create_task(self._broadcast({
-            "type": "clock",
-            "match_time": self.replay_session.clock.get_time(),
-            "speed": speed,
-            "running": self.replay_session.clock.is_running,
-        }))
-
     def _on_approaching_critical(self, event_type: str, in_game_sec: float) -> None:
-        """Forwarded from ReplaySession look-ahead — no-op in batch system."""
-        pass
+        """Fired when a critical event is within the anticipation window.
+        Broadcasts a loading state if the commentary buffer is thin."""
+        if self._is_loading:
+            return  # already loading — don't stack
+        if self.director.time_block_queue.pending_count < LOADING_MIN_BLOCKS_READY:
+            if self._loading_wait_task:
+                self._loading_wait_task.cancel()
+            loop = asyncio.get_event_loop()
+            loop.create_task(self._broadcast_loading("approaching_critical"))
+            self._loading_wait_task = loop.create_task(self._await_ready_after_speed())
 
     # ------------------------------------------------------------------
     # Internal tasks
@@ -572,6 +634,7 @@ class MatchSession:
                     "type": "clock",
                     "match_time": self.replay_session.clock.get_time(),
                     "speed": self.replay_session.clock.speed,
+                    "effective_speed": self.replay_session.clock.effective_speed,
                     "running": self.replay_session.clock.is_running,
                     "state": self.state.to_dict(),
                 }
@@ -680,3 +743,4 @@ async def ws_match(websocket: WebSocket, match_id: str = ""):
             logger.info(f"Last client disconnected from {session.match_id} — stopping session")
             session.stop()
             _sessions.pop(session.match_id, None)
+            remove_session(session.match_id)

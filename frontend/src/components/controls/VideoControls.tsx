@@ -13,6 +13,8 @@ interface VideoControlsProps {
   matchEnded: boolean
   connected: boolean
   ttsReady: boolean
+  isLoading: boolean
+  loadingReason: string | null
   muted: boolean
   homeColor: string
   awayColor: string
@@ -57,7 +59,7 @@ const OVERLAY_BTNS: { key: keyof PitchOverlays; icon: string; title: string }[] 
 
 export const VideoControls: React.FC<VideoControlsProps> = ({
   running, speed, matchTime, totalTime, currentPeriod, matchEnded,
-  connected, ttsReady, muted,
+  connected, ttsReady, isLoading, loadingReason, muted,
   homeColor, awayColor, activityBuckets, goalMarkers, summaryLoading, homeTeam,
   overlays, onToggleOverlay,
   onPlay, onPause, onSeek, onSpeedChange, onMuteToggle,
@@ -65,7 +67,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
 }) => {
   const barRef = useRef<HTMLDivElement>(null)
   const progress = totalTime > 0 ? Math.min(1, matchTime / totalTime) : 0
-  const canControl = connected && !matchEnded
+  const canControl = connected && !matchEnded && !isLoading
 
   const handleBarClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!barRef.current) return
@@ -148,6 +150,14 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
 
       {/* ── Left column: timeline + playback (aligns with pitch) ───────── */}
       <div className="flex-1 min-w-0 px-4 py-2">
+        {isLoading && (
+          <div className="flex items-center gap-2 mb-1">
+            <div className="w-2.5 h-2.5 border border-gray-700 border-t-amber-500/60 rounded-full animate-spin" />
+            <span className="font-mono text-[10px] text-amber-500/70">
+              {({ seek: 'Seeking…', speed_increase: 'Buffering…', startup: 'Loading match…', approaching_critical: 'Preparing…' } as Record<string, string>)[loadingReason ?? ''] ?? 'Loading…'}
+            </span>
+          </div>
+        )}
         {seekBar}
 
         {/* Controls row */}
