@@ -111,6 +111,51 @@ function colorsSimilar(c1: string, c2: string, threshold = 80): boolean {
 
 // ── Goal flash overlay ────────────────────────────────────────────────────
 
+const LOADING_LABELS: Record<string, string> = {
+  seek:                 'Seeking…',
+  speed_increase:       'Buffering…',
+  startup:              'Loading match…',
+  approaching_critical: 'Preparing…',
+}
+
+function PauseLoadingOverlay({
+  isLoading,
+  loadingReason,
+}: {
+  isLoading: boolean
+  loadingReason: string | null
+}) {
+  if (isLoading) {
+    return (
+      <div
+        className="absolute inset-0 flex items-center justify-center pointer-events-none"
+        style={{ zIndex: 35, background: 'rgba(5,5,15,0.72)' }}
+      >
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-2 border-gray-700 border-t-amber-500 rounded-full animate-spin" />
+          <span className="font-mono text-sm text-amber-400 tracking-wide">
+            {LOADING_LABELS[loadingReason ?? ''] ?? 'Loading…'}
+          </span>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div
+      className="absolute inset-0 flex items-center justify-center pointer-events-none"
+      style={{ zIndex: 35, background: 'rgba(5,5,15,0.45)' }}
+    >
+      <div className="flex flex-col items-center gap-2 opacity-60">
+        <svg className="w-12 h-12 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+          <rect x="6" y="4" width="4" height="16" rx="1" />
+          <rect x="14" y="4" width="4" height="16" rx="1" />
+        </svg>
+        <span className="font-mono text-xs text-gray-500 tracking-widest uppercase">Paused</span>
+      </div>
+    </div>
+  )
+}
+
 interface GoalFlash { color: string; scorer: string; team: string; key: number }
 
 function GoalFlashOverlay({ flash }: { flash: GoalFlash }) {
@@ -210,7 +255,8 @@ export default function App() {
 
   // ── WebSocket ─────────────────────────────────────────────────────────
   const {
-    connected, matchState, matchTime, displayTime, speed, running, matchEnded, currentPeriod,
+    connected, matchState, matchTime, displayTime, speed, effectiveSpeed, running,
+    isLoading, loadingReason, matchEnded, currentPeriod,
     recentEvents, goalEvents, matchMeta, analysis,
     ttsReady, backendInfo,
     setOnAudioReceived, sendAction, debugTraces,
@@ -593,7 +639,7 @@ export default function App() {
                 <PitchCanvas
                   markers={markers}
                   ballHistory={ballHistory}
-                  matchSpeed={speed}
+                  matchSpeed={effectiveSpeed}
                   dangerEntries={dangerEntries}
                   homeTeam={homeTeam}
                   awayTeam={awayTeam}
@@ -609,6 +655,9 @@ export default function App() {
                   awayColorPrimary={awayColor}
                   awayColorSecondary={awayColorSecondary}
                 />
+                {(isLoading || !running) && !matchEnded && (
+                  <PauseLoadingOverlay isLoading={isLoading} loadingReason={loadingReason} />
+                )}
                 {goalFlash && <GoalFlashOverlay key={goalFlash.key} flash={goalFlash} />}
                 <CommentaryOverlay
                   latestCommentary={latestCommentary}
@@ -670,6 +719,8 @@ export default function App() {
         matchEnded={matchEnded}
         connected={connected}
         ttsReady={ttsReady}
+        isLoading={isLoading}
+        loadingReason={loadingReason}
         muted={muted}
         homeColor={homeColor}
         awayColor={awayColor}

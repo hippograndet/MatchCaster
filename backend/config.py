@@ -120,6 +120,13 @@ PORT: int = 8000
 # generation passes ALL events to the LLM for narrative context.
 
 # ---------------------------------------------------------------------------
+# Replay engine — speed curve & loading states
+# ---------------------------------------------------------------------------
+CRITICAL_ZONE_PRE_SEC: float = 15.0   # game-seconds before a critical event to lock to 1x
+CRITICAL_ZONE_POST_SEC: float = 5.0   # game-seconds after a critical event before restoring base speed
+LOADING_MIN_BLOCKS_READY: int = 2     # blocks required before suppressing a loading broadcast
+
+# ---------------------------------------------------------------------------
 # Developer mode (never True in production)
 # ---------------------------------------------------------------------------
 DEV_MODE: bool = _os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")

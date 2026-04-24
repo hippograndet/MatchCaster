@@ -108,6 +108,9 @@ class CommentaryBlock:
     agent_name: str = "play_by_play"
     audio_bytes: Optional[bytes] = None
     ready: bool = False               # True once TTS has been synthesized
+    # Reserved for future director orchestration plan (Phase B — sealed-envelope pattern)
+    sealed: bool = False              # if True, hold block until release_at
+    release_at: Optional[float] = None  # game-time to release a sealed block
 
 
 class TimeBlockQueue:
