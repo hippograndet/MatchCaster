@@ -26,12 +26,14 @@ export interface UseAudioPlayerReturn {
   muted: boolean
   setOnPlaybackStarted: (cb: ((e: PlaybackStartedEvent) => void) | null) => void
   unlockAudio: () => void   // call on any user gesture to unblock autoplay
+  stopPlayback: () => void  // stop current audio and clear queue
 }
 
 export function useAudioPlayer(): UseAudioPlayerReturn {
   const ctxRef = useRef<AudioContext | null>(null)
   const queueRef = useRef<AudioQueueItem[]>([])
   const isPlayingRef = useRef(false)
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null)
   const [activeAgent, setActiveAgent] = useState<AgentName | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [muted, setMutedState] = useState(false)
@@ -86,6 +88,9 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     source.connect(gainNode)
     gainNode.connect(ctx.destination)
 
+    // Store ref so stopPlayback can interrupt it
+    sourceRef.current = source
+
     isPlayingRef.current = true
     setIsPlaying(true)
     setActiveAgent(item.agent)
@@ -99,6 +104,7 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     }
 
     source.onended = () => {
+      sourceRef.current = null
       setTimeout(() => playNext(), 150)
     }
 
@@ -176,5 +182,22 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     }
   }, [getCtx])
 
-  return { activeAgent, isPlaying, handleAudioMessage, setMuted, muted, setOnPlaybackStarted, unlockAudio }
+  /**
+   * Immediately stop the currently playing audio and clear the queue.
+   * Used when the user pauses or seeks — no TTS should continue playing.
+   */
+  const stopPlayback = useCallback(() => {
+    // Stop the currently playing source
+    if (sourceRef.current) {
+      try { sourceRef.current.stop() } catch { /* already stopped */ }
+      sourceRef.current = null
+    }
+    // Clear the queue
+    queueRef.current = []
+    isPlayingRef.current = false
+    setIsPlaying(false)
+    setActiveAgent(null)
+  }, [])
+
+  return { activeAgent, isPlaying, handleAudioMessage, setMuted, muted, setOnPlaybackStarted, unlockAudio, stopPlayback }
 }

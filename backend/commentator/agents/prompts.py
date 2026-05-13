@@ -310,6 +310,104 @@ def build_flow_block_user(
 
 
 # ---------------------------------------------------------------------------
+# Action Summary system prompt — short-horizon build-up narrative
+# ---------------------------------------------------------------------------
+ACTION_SUMMARY_SYSTEM = """\
+You are a live football commentator describing the sequence of play that just unfolded.
+In 1-2 sentences (max 25 words), describe exactly what happened in this passage of play.
+Focus on the build-up: the passes, runs, and movement that created this moment.
+Present tense, active voice. Last names only. No speculation — only what the data shows.
+Output ONLY the commentary text. No preamble, labels, or JSON.
+
+{personality_modifier}
+"""
+
+ACTION_SUMMARY_SYSTEM_COMPACT = """\
+Describe the build-up to this football moment in 1-2 sentences (max 25 words).
+Active voice, last names only, plain text only.
+
+{personality_modifier}
+"""
+
+
+def build_action_summary_system(personality: str = "neutral", compact: bool = False) -> str:
+    modifier = get_personality_modifier(personality)
+    template = ACTION_SUMMARY_SYSTEM_COMPACT if compact else ACTION_SUMMARY_SYSTEM
+    return template.format(personality_modifier=modifier)
+
+
+def build_action_summary_user(
+    events_text: str,
+    state_summary: str,
+    recent_utterances: str,
+) -> str:
+    parts = []
+    if recent_utterances:
+        parts.append(f"RECENT COMMENTARY — do not repeat:\n{recent_utterances}")
+    parts.append(f"MATCH STATE:\n{state_summary}")
+    parts.append(f"EVENTS IN THIS WINDOW:\n{events_text}")
+    parts.append("Describe the build-up in 1-2 sentences (plain text, 25 words max):")
+    return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Context Window system prompt — 5m/15m match significance framing
+# ---------------------------------------------------------------------------
+CONTEXT_WINDOW_SYSTEM = """\
+You are a football analyst providing match context during a live broadcast.
+In 1-2 sentences (max 30 words), explain what the current moment means given the recent trend.
+Reference the last 5 minutes specifically. Macro, tactical, purposeful.
+Do NOT describe the last action — that is play-by-play's job.
+Output ONLY the commentary text. No preamble, labels, or JSON.
+
+{personality_modifier}
+"""
+
+CONTEXT_WINDOW_SYSTEM_COMPACT = """\
+Football analyst: explain what this moment means given the last 5 minutes of play.
+1-2 sentences, 30 words max. Macro only — no action description. Plain text.
+
+{personality_modifier}
+"""
+
+
+def build_context_window_system(personality: str = "neutral", compact: bool = False) -> str:
+    modifier = get_personality_modifier(personality)
+    template = CONTEXT_WINDOW_SYSTEM_COMPACT if compact else CONTEXT_WINDOW_SYSTEM
+    return template.format(personality_modifier=modifier)
+
+
+def build_context_window_user(
+    context_5m: str,
+    context_15m: str,
+    state_summary: str,
+    trigger_type: str,
+    recent_utterances: str,
+    match_context: str = "",
+) -> str:
+    trigger_line = {
+        "timer":     "Offer a macro tactical observation on how the match is unfolding.",
+        "dead_ball": "Play has paused. Use this window to explain the recent trend.",
+        "post_goal": "A goal was just scored. What does it mean for the match trajectory?",
+        "substitution": "A substitution was just made. What does it signal tactically?",
+    }.get(trigger_type, "Offer a macro tactical observation.")
+
+    parts = []
+    if recent_utterances:
+        parts.append(f"RECENT COMMENTARY — do not repeat:\n{recent_utterances}")
+    parts.append(f"MATCH STATE:\n{state_summary}")
+    if match_context:
+        parts.append(f"MATCH INFO:\n{match_context}")
+    if context_5m:
+        parts.append(f"RECENT TREND (5 min):\n{context_5m}")
+    if context_15m:
+        parts.append(f"MATCH PICTURE (15 min):\n{context_15m}")
+    parts.append(f"TRIGGER: {trigger_line}")
+    parts.append("Your expert insight (1-2 sentences, max 30 words, plain text only):")
+    return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Legacy aliases — kept so existing imports don't break during transition
 # ---------------------------------------------------------------------------
 def build_pbp_system(personality: str = "neutral") -> str:

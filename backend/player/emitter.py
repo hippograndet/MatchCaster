@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import logging
 from dataclasses import asdict
@@ -13,19 +14,24 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 
-from config import EVENT_BUFFER_LOOKAHEAD_SEC, DEFAULT_SPEED_MULTIPLIER
+from config import (
+    EVENT_BUFFER_LOOKAHEAD_SEC,
+    DEFAULT_SPEED_MULTIPLIER,
+    CRITICAL_ZONE_PRE_SEC,
+    CRITICAL_ZONE_POST_SEC,
+)
 from player.loader import MatchEvent, load_events, list_available_matches, compute_critical_timeline
-from player.clock import MatchClock
+from player.clock import MatchClock, SpeedCurve
 
 logger = logging.getLogger("[EMITTER]")
 
 router = APIRouter()
 
 # Look-ahead window (game-seconds): if a critical event is within this window,
-# trigger anticipation slow-down.
+# trigger anticipation callback.
 ANTICIPATION_WINDOW_SEC = 30.0
 
-# Global registry: match_id → (clock, events, event_pointer)
+# Global registry: match_id → ReplaySession
 _active_replays: dict[str, "ReplaySession"] = {}
 
 
@@ -37,16 +43,27 @@ class ReplaySession:
         self.clock = MatchClock()
         self.events: list[MatchEvent] = load_events(match_id)
         self.critical_timeline: list[MatchEvent] = compute_critical_timeline(self.events)
+
+        # Pre-built timestamp arrays for O(log N) seek
+        self._timestamps: list[float] = [e.timestamp_sec for e in self.events]
+        self._critical_timestamps: list[float] = [e.timestamp_sec for e in self.critical_timeline]
+
         self._event_index: int = 0
-        self._critical_index: int = 0        # pointer into critical_timeline for look-ahead
+        self._critical_index: int = 0
         self._subscribers: list[asyncio.Queue] = []
         self._look_ahead_cb: "Callable[[str, float], None] | None" = None
+
+        # Wire SpeedCurve into the clock
+        curve = SpeedCurve.build(
+            self.critical_timeline,
+            pre_sec=CRITICAL_ZONE_PRE_SEC,
+            post_sec=CRITICAL_ZONE_POST_SEC,
+        )
+        self.clock.set_speed_curve(curve)
+
         self.clock.register_tick(self._on_tick)
 
     def register_look_ahead(self, cb: "Callable[[str, float], None]") -> None:
-        """Register callback fired when a critical event is approaching.
-        Signature: cb(event_type: str, game_seconds_until: float)
-        """
         self._look_ahead_cb = cb
 
     async def _on_tick(self, match_time: float) -> None:
@@ -70,13 +87,11 @@ class ReplaySession:
 
         # Advance the critical look-ahead pointer and fire callback if needed
         if self._look_ahead_cb and self.clock.speed > 2.0:
-            # Skip past critical events already passed
             while (
                 self._critical_index < len(self.critical_timeline)
                 and self.critical_timeline[self._critical_index].timestamp_sec <= match_time
             ):
                 self._critical_index += 1
-            # Check if the next critical event is within the anticipation window
             if self._critical_index < len(self.critical_timeline):
                 next_critical = self.critical_timeline[self._critical_index]
                 gap = next_critical.timestamp_sec - match_time
@@ -98,29 +113,61 @@ class ReplaySession:
         self.clock.reset(0.0)
 
     def seek(self, target_time: float) -> None:
-        """Seek to target_time (game seconds). Clamps to [0, last event time]."""
+        """
+        Seek to target_time (game seconds).
+        Uses binary search — O(log N) instead of O(N).
+        Flushes all subscriber queues so no stale pre-seek events arrive downstream.
+        """
         target_time = max(0.0, target_time)
         self.clock.reset(target_time)
-        # Reposition event pointer to first event at or after target_time
-        self._event_index = 0
-        for i, ev in enumerate(self.events):
-            if ev.timestamp_sec >= target_time:
-                self._event_index = i
-                break
-        else:
-            self._event_index = len(self.events)
-        # Reposition critical look-ahead pointer
-        self._critical_index = 0
-        for i, ev in enumerate(self.critical_timeline):
-            if ev.timestamp_sec > target_time:
-                self._critical_index = i
-                break
-        else:
-            self._critical_index = len(self.critical_timeline)
+
+        # Binary search: first event at or after target_time
+        self._event_index = bisect.bisect_left(self._timestamps, target_time)
+
+        # Binary search: first critical event strictly after target_time
+        self._critical_index = bisect.bisect_right(self._critical_timestamps, target_time)
+
+        # Flush all subscriber queues — prevent stale events arriving post-seek
+        for q in self._subscribers:
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+    def close(self) -> None:
+        """Stop clock and release all subscriber queues. Call before evicting from registry."""
+        self.clock.stop()
+        for q in self._subscribers:
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+        self._subscribers.clear()
+        logger.info(f"ReplaySession closed: {self.match_id}")
+
+
+def get_or_create_session(match_id: str) -> ReplaySession:
+    if match_id not in _active_replays:
+        session = ReplaySession(match_id)
+        _active_replays[match_id] = session
+    return _active_replays[match_id]
+
+
+def get_session(match_id: str) -> ReplaySession | None:
+    return _active_replays.get(match_id)
+
+
+def remove_session(match_id: str) -> None:
+    """Evict a session from the registry and release its resources."""
+    session = _active_replays.pop(match_id, None)
+    if session:
+        session.close()
+        logger.info(f"Session evicted from registry: {match_id}")
 
 
 def _display_player(ev: MatchEvent) -> str:
-    """Return a human-readable player identifier, falling back gracefully."""
     if ev.player:
         return ev.player
     if ev.event_type == "Starting XI":
@@ -144,34 +191,17 @@ def _event_to_dict(ev: MatchEvent) -> dict:
     }
 
 
-def get_or_create_session(match_id: str) -> ReplaySession:
-    if match_id not in _active_replays:
-        session = ReplaySession(match_id)
-        _active_replays[match_id] = session
-    return _active_replays[match_id]
-
-
-def get_session(match_id: str) -> ReplaySession | None:
-    return _active_replays.get(match_id)
-
-
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 @router.get("/api/matches")
 async def list_matches():
-    """Return list of available match IDs."""
     return list_available_matches()
 
 
 @router.get("/api/events/stream")
 async def stream_events(match_id: str, speed: float = DEFAULT_SPEED_MULTIPLIER):
-    """
-    SSE endpoint. Streams MatchEvents as JSON in real-time according to
-    the match clock. The director subscribes to this internally; the
-    frontend can also use it for lightweight event display.
-    """
     session = get_or_create_session(match_id)
     session.clock.set_speed(speed)
     if not session.clock.is_running:
@@ -197,9 +227,6 @@ async def stream_events(match_id: str, speed: float = DEFAULT_SPEED_MULTIPLIER):
 
 @router.post("/api/replay/control")
 async def control_replay(match_id: str, action: str, speed: float | None = None):
-    """
-    Control replay: action = 'start' | 'pause' | 'resume' | 'stop' | 'reset'
-    """
     session = get_or_create_session(match_id)
     if action == "start":
         if speed is not None:
