@@ -112,10 +112,14 @@ function colorsSimilar(c1: string, c2: string, threshold = 80): boolean {
 // ── Goal flash overlay ────────────────────────────────────────────────────
 
 const LOADING_LABELS: Record<string, string> = {
-  seek:                 'Seeking…',
-  speed_increase:       'Buffering…',
-  startup:              'Loading match…',
-  approaching_critical: 'Preparing…',
+  seek:                 'Rewinding match…',
+  seek_position:        'Jumping to match time…',
+  seek_events:          'Scanning match events…',
+  seek_stats:           'Rebuilding match stats…',
+  seek_commentary:      'AI is generating commentary…',
+  speed_increase:       'Buffering ahead…',
+  startup:              'Initialising engines…',
+  approaching_critical: 'Preparing commentary…',
 }
 
 function PauseLoadingOverlay({
@@ -263,7 +267,7 @@ export default function App() {
   } = useWebSocket(selectedMatch)
 
   // ── Audio ─────────────────────────────────────────────────────────────
-  const { activeAgent, isPlaying, handleAudioMessage, setMuted, muted, setOnPlaybackStarted, unlockAudio } = useAudioPlayer()
+  const { activeAgent, isPlaying, handleAudioMessage, setMuted, muted, setOnPlaybackStarted, unlockAudio, stopPlayback } = useAudioPlayer()
   const [latestCommentary, setLatestCommentary] = useState<AgentCommentary | null>(null)
 
   useEffect(() => { setOnAudioReceived(handleAudioMessage) }, [setOnAudioReceived, handleAudioMessage])
@@ -501,8 +505,12 @@ export default function App() {
 
   // ── Handlers ──────────────────────────────────────────────────────────
   const handlePlay        = useCallback(() => { unlockAudio(); sendAction('play', { speed }) }, [sendAction, speed, unlockAudio])
-  const handlePause       = useCallback(() => sendAction('pause'), [sendAction])
+  const handlePause       = useCallback(() => {
+    stopPlayback()
+    sendAction('pause')
+  }, [sendAction, stopPlayback])
   const handleSeek        = useCallback((t: number) => {
+    stopPlayback()
     sendAction('seek', { target_time: t })
     possessionSegmentsRef.current = []
     possessionTeamRef.current = null

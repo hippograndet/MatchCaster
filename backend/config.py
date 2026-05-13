@@ -8,7 +8,7 @@ import os as _os
 # ---------------------------------------------------------------------------
 DEFAULT_SPEED_MULTIPLIER: float = 1.0       # 1× real time (default)
 EVENT_BUFFER_LOOKAHEAD_SEC: float = 5.0     # Director looks ahead 5 match-seconds
-MAX_CONCURRENT_AGENT_CALLS: int = 1          # CPU-only: serial calls prevent thread contention
+MAX_CONCURRENT_AGENT_CALLS: int = 3          # parallel agent calls (Groq); was 1 (serial/Ollama)
 
 # ---------------------------------------------------------------------------
 # LLM backend selection
@@ -130,3 +130,11 @@ LOADING_MIN_BLOCKS_READY: int = 2     # blocks required before suppressing a loa
 # Developer mode (never True in production)
 # ---------------------------------------------------------------------------
 DEV_MODE: bool = _os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")
+
+# ---------------------------------------------------------------------------
+# Director orchestration — Phase A flags
+# All default False / legacy-on; flip to enable new behaviour progressively.
+# ---------------------------------------------------------------------------
+ENABLE_DIRECTOR_SELECTION_POLICY: bool = False   # Phase B: coordinator candidate selection
+ENABLE_DIRECTOR_DECISION_METADATA: bool = False  # Phase D: observability fields in WS payload
+ENABLE_DIRECTOR_LEGACY_FALLBACK: bool = True     # keep legacy direct-dispatch path available

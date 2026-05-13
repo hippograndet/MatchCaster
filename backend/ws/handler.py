@@ -349,16 +349,38 @@ class MatchSession:
         logger.info("Loading complete — ready")
 
     async def _await_ready_after_seek(self) -> None:
-        """Poll until director has at least one block ready, then broadcast ready."""
+        """
+        Generate blocks at the new seek position while keeping the director
+        paused (no dispatch of commentary). Uses the pregenerate=True path
+        which skips the is_paused gate check in the LLM calls.
+        Broadcasts ready once the first block is ready.
+        Times out after 60 seconds to prevent an infinite loading screen.
+        """
+        # Manually pre-generate blocks at the new position, like pregenerate_blocks does
+        block_dur = self.director._compute_block_duration()
+        loop = asyncio.get_event_loop()
+        for i in range(3):  # generate a few blocks so we have a buffer
+            bstart = self.director._next_block_start + i * block_dur
+            bend = bstart + block_dur
+            loop.create_task(
+                self.director._generate_pbp_block(bstart, bend, pregenerate=True)
+            )
+
+        deadline = asyncio.get_event_loop().time() + 60.0
         while True:
             await asyncio.sleep(0.2)
+            if asyncio.get_event_loop().time() > deadline:
+                logger.warning("Seek loading timed out — forcing ready")
+                self.director._preload_done.set()
+                break
             if (
                 self.director._preload_done.is_set()
                 and self.director.time_block_queue.pending_count >= 1
             ):
-                self.director.on_loading_end()
-                await self._broadcast_ready()
-                return
+                break
+
+        self.director.on_loading_end()
+        await self._broadcast_ready()
 
     async def _await_ready_after_speed(self) -> None:
         """Poll until commentary buffer is replenished, then broadcast ready."""
@@ -473,10 +495,11 @@ class MatchSession:
 
             # Pause director and signal loading before any seek work begins
             self.director.on_loading_start("seek")
-            await self._broadcast_loading("seek")
+            await self._broadcast_loading("seek_position")
 
             # Seek: binary search reposition + queue flush (Phase 2)
             self.replay_session.seek(target)
+            await self._broadcast_loading("seek_events")
 
             # Flush stale audio and pre-generated commentary, reset batch pointer
             self.audio_queue.clear()
@@ -485,6 +508,7 @@ class MatchSession:
             # Reset analysis engine so agents get correct context at the new position
             if self._analysis:
                 self._analysis.reset()
+            await self._broadcast_loading("seek_stats")
 
             # Restore cumulative stats (score, totals) and rebuild analysis context
             self._restore_stats_at(target)
@@ -504,6 +528,7 @@ class MatchSession:
             })
 
             # Spawn background task: broadcast ready once first block is generated
+            await self._broadcast_loading("seek_commentary")
             if self._loading_wait_task:
                 self._loading_wait_task.cancel()
             self._loading_wait_task = asyncio.get_event_loop().create_task(
@@ -608,6 +633,10 @@ class MatchSession:
         try:
             while True:
                 item = await self.audio_queue.get()
+                # When the director is paused (explicit pause or seek loading),
+                # silently drain items without broadcasting — no audio should play.
+                if self.director.is_paused:
+                    continue
                 msg: dict = {
                     "type": "audio",
                     "agent": item.agent_name,
